@@ -10,7 +10,7 @@ from tkinter import ttk
 from tkinter import filedialog, messagebox, ttk
 import traceback
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 import zipfile
 import gzip
 from tkcalendar import DateEntry
@@ -609,6 +609,8 @@ class PCMApplication:
         instruction_label.pack(pady=(0, 10))
 
         # Date and CP PAN fields
+        yesterday = datetime.now() - timedelta(days=1)
+
         date_pan_frame = tk.Frame(scrollable_frame, bg=bg_color)
         date_pan_frame.pack(pady=8, padx=20, fill=tk.X)
 
@@ -621,12 +623,15 @@ class PCMApplication:
             textvariable=self.segregation_date_var,
             date_pattern='dd/MM/yyyy',
             width=15,
-            font=('Arial', 10)
+            font=('Arial', 10),
+            year=yesterday.year,
+            month=yesterday.month,
+            day=yesterday.day
         )
         segregation_date_entry.pack(side=tk.LEFT, padx=(5, 20))
 
         # CP PAN field
-        tk.Label(date_pan_frame, text="CP PAN:", font=('Arial', 12, 'bold'),
+        tk.Label(date_pan_frame, text="Trading member PAN:", font=('Arial', 12, 'bold'),
                 bg=bg_color, fg='#2c3e50').pack(side=tk.LEFT)
         self.cp_pan_var = tk.StringVar()
         tk.Entry(date_pan_frame, textvariable=self.cp_pan_var, width=20,
@@ -651,6 +656,9 @@ class PCMApplication:
             ]),
             ("Security Pledge File:", [
                 ("F_90123_SEC_PLEDGE", "self.sec_pledge_var")
+            ]),
+            ("Extra Records File:", [
+                ("Extra_Records_File", "self.extra_records_file")
             ])
         ]
 
@@ -663,6 +671,7 @@ class PCMApplication:
         self.f_cp_master_var = tk.StringVar()
         self.collateral_violation_var = tk.StringVar()
         self.sec_pledge_var = tk.StringVar()
+        self.extra_records_file = tk.StringVar()
         self.segregation_output_var = tk.StringVar()
 
         # Create file selection sections
@@ -1261,6 +1270,7 @@ class PCMApplication:
             f_cp_master = self.f_cp_master_var.get()
             collateral_violation = self.collateral_violation_var.get()
             sec_pledge = self.sec_pledge_var.get()
+            extra_records = self.extra_records_file.get()
             output_path = self.segregation_output_var.get()
             
             # Validate inputs
@@ -1281,7 +1291,8 @@ class PCMApplication:
                 (x_cp_master, "X CP Master Data"),
                 (f_cp_master, "F CP Master Data"),
                 (collateral_violation, "Collateral Violation Report"),
-                (sec_pledge, "Security Pledge File")
+                (sec_pledge, "Security Pledge File"),
+                (extra_records, "Extra Records File")
             ]
             
             missing_files = []
@@ -1315,7 +1326,7 @@ class PCMApplication:
             result = self.process_segregation_files(
                 selected_date, cp_pan, cash_collateral_cds, cash_collateral_fno,
                 daily_margin_nsecr, daily_margin_nsefno, x_cp_master, f_cp_master,
-                collateral_violation, sec_pledge, output_path
+                collateral_violation, sec_pledge, extra_records, output_path
             )
             
             if result:
@@ -1335,7 +1346,7 @@ class PCMApplication:
 
     def process_segregation_files(self, date, cp_pan, cash_collateral_cds, cash_collateral_fno,
                                 daily_margin_nsecr, daily_margin_nsefno, x_cp_master, f_cp_master,
-                                collateral_violation, sec_pledge, output_path):
+                                collateral_violation, sec_pledge, extra_records, output_path):
         """Process all segregation files and generate the final report"""
         try:
             # Import segregation functions
@@ -1493,8 +1504,21 @@ class PCMApplication:
                 
                 data.append(row)
             
+            extra_records_df = read_file(extra_records)
+            for _, row in extra_records_df.iterrows():
+                record = {}
+
+                # Copy each column into dictionary
+                for col in extra_records_df.columns:
+                    record[col] = row[col]
+
+                # Append into your main data list
+                data.append(record)
+            
+            # print("######################", data)
             # Write output file
-            output_file = os.path.join(output_path, f"segregation_report_{formatted_date.replace('-', '')}.xlsx")
+            
+            output_file = os.path.join(output_path, f"{cp_pan}_{formatted_date.replace('-', '')}_01.xlsx")
             write_file(output_file, data=data, header=segregation_headers)
             
             # Create ZIP file with all input files and output
