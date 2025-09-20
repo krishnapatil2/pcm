@@ -130,13 +130,23 @@ def write_file(file_path: str, data: list[dict], header: list[str]) -> None:
     
     # Get file extension
     ext = os.path.splitext(file_path)[1].lower()
+    sheet_name = os.path.splitext(os.path.basename(file_path))[0]
     
     try:
         if ext == ".csv":
             df.to_csv(file_path, index=False)
         elif ext == ".xlsx":
             # xlsxwriter gives clean output with styles, no warnings
-            df.to_excel(file_path, index=False, engine="xlsxwriter")
+            with pd.ExcelWriter(file_path, engine="xlsxwriter") as writer:
+                df.to_excel(writer, index=False, sheet_name=sheet_name, header=False, startrow=1)
+                workbook  = writer.book
+                worksheet = writer.sheets[sheet_name]
+
+                # Write header manually without formatting
+                for col_num, column_name in enumerate(header):
+                    worksheet.write(0, col_num, column_name)
+
+            # df.to_excel(file_path, index=False, engine="xlsxwriter")
         elif ext == ".xls":
             df.to_excel(file_path, index=False, engine="xlwt")  # legacy
         else:
@@ -144,14 +154,14 @@ def write_file(file_path: str, data: list[dict], header: list[str]) -> None:
     except Exception as e:
         raise RuntimeError(f"Error writing {file_path}: {str(e)}")
 
-CASHCOLLATERAL_CDS = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\CashCollateral_cds.xls'
-CASHCOLLATERAL_FNO = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\CashCollateral_fno.xls'
-COLLATERAL_VIOLATION_REPORT = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\Collateral Valuation Report.xls'
-DAILY_MARGIN_NSECR_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\Daily Margin Report NSECR.xls'
-DAILY_MARGIN_NSEFNO_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\Daily Margin Report NSEFNO.xls'
-FO_MSATER_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\F_CPMaster_data.xlsx'
-CD_MASTER_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\X_CPMaster_data.xlsx'
-SEC_PLEDGE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation\F_90123_SEC_PLEDGE_11092025_02.csv\F_90123_SEC_PLEDGE_11092025_02.csv'
+CASHCOLLATERAL_CDS = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\CashCollateral_cds.xls'
+CASHCOLLATERAL_FNO = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\CashCollateral_fno.xls'
+COLLATERAL_VIOLATION_REPORT = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Collateral Valuation Report.xls'
+DAILY_MARGIN_NSECR_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Daily Margin Report NSECR.xls'
+DAILY_MARGIN_NSEFNO_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Daily Margin Report NSEFNO.xls'
+FO_MSATER_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\F_CPMaster_data.xlsx'
+CD_MASTER_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\X_CPMaster_data.xlsx'
+SEC_PLEDGE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\F_90123_SEC_PLEDGE_16092025_02.csv'
 
 # FO_MSATER_FILE = r"C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\F_CPMaster_data.xlsx"
 # CD_MASTER_FILE = r"C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\X_CPMaster_data.xlsx"
@@ -178,72 +188,74 @@ account_type = "C"
 # Directory path
 directory = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation'
 # Filename using format
-filename = "{}_{}.xlsx".format(date, pan)
-outpath = os.path.join(directory, filename)
+if False:
+    filename = "{}_{}.xlsx".format(date, pan)
+    outpath = os.path.join(directory, filename)
 
-# File name without extension
-FO = 'FO' if 'F' == os.path.splitext(os.path.basename(FO_MSATER_FILE))[0].split('_')[0] else ''
-CD = 'CD' if os.path.splitext(os.path.basename(CD_MASTER_FILE))[0].split('_')[0] else ''
+    # File name without extension
+    FO = 'FO' if 'F' == os.path.splitext(os.path.basename(FO_MSATER_FILE))[0].split('_')[0] else ''
+    CD = 'CD' if os.path.splitext(os.path.basename(CD_MASTER_FILE))[0].split('_')[0] else ''
 
-# Read FO file
-df1 = read_file(FO_MSATER_FILE)
-cp_codes_fo = df1["CP Code"].tolist()         # replace "CP Code" with your actual column name
-pan_fo = df1["PAN Number"].tolist()           # replace "PAN Number" with actual column name
+    # Read FO file
+    df1 = read_file(FO_MSATER_FILE)
+    cp_codes_fo = df1["CP Code"].tolist()         # replace "CP Code" with your actual column name
+    pan_fo = df1["PAN Number"].tolist()           # replace "PAN Number" with actual column name
 
-# Read CD file
-df2 = read_file(CD_MASTER_FILE)
-cp_codes_cd = df2["CP Code"].tolist()
-pan_cd = df2["PAN Number"].tolist()
+    # Read CD file
+    df2 = read_file(CD_MASTER_FILE)
+    cp_codes_cd = df2["CP Code"].tolist()
+    pan_cd = df2["PAN Number"].tolist()
 
-df3 = read_file(CASHCOLLATERAL_FNO, header_row=9, usecols="B:I")  # because row 10 is the header
-fo_collateral_lookup = dict(zip(df3["ClientCode"], df3["TotalCollateral"]))
+    df3 = read_file(CASHCOLLATERAL_FNO, header_row=9, usecols="B:I")  # because row 10 is the header
+    fo_collateral_lookup = dict(zip(df3["ClientCode"], df3["TotalCollateral"]))
 
-df4 = read_file(CASHCOLLATERAL_CDS, header_row=9, usecols="B:I")  # because row 10 is the header
-cd_collateral_lookup = dict(zip(df4["ClientCode"], df4["TotalCollateral"]))
+    df4 = read_file(CASHCOLLATERAL_CDS, header_row=9, usecols="B:I")  # because row 10 is the header
+    cd_collateral_lookup = dict(zip(df4["ClientCode"], df4["TotalCollateral"]))
 
-# "Funds" 
-# "ClientCode"
-df5 = read_file(DAILY_MARGIN_NSECR_FILE, header_row=9, usecols="B:T")  # because row 10 is the header
-cd_daily_margin_lookup = dict(zip(df5["ClientCode"], df5["Funds"]))
+    # "Funds" 
+    # "ClientCode"
+    df5 = read_file(DAILY_MARGIN_NSECR_FILE, header_row=9, usecols="B:T")  # because row 10 is the header
+    cd_daily_margin_lookup = dict(zip(df5["ClientCode"], df5["Funds"]))
 
-df6 = read_file(DAILY_MARGIN_NSEFNO_FILE, header_row=9, usecols="B:T")  # because row 10 is the header
-fo_daily_margin_lookup = dict(zip(df6["ClientCode"], df6["Funds"]))
+    df6 = read_file(DAILY_MARGIN_NSEFNO_FILE, header_row=9, usecols="B:T")  # because row 10 is the header
+    fo_daily_margin_lookup = dict(zip(df6["ClientCode"], df6["Funds"]))
 
-df7 = read_file(COLLATERAL_VIOLATION_REPORT, header_row=9, usecols="B:H")
-# Build lookup: {ClientCode: {"CashEquivalent": x, "NonCash": y}}
-collateral_violation_lookup = {}
+    df7 = read_file(COLLATERAL_VIOLATION_REPORT, header_row=9, usecols="B:H")
+    # Build lookup: {ClientCode: {"CashEquivalent": x, "NonCash": y}}
+    collateral_violation_lookup = {}
 
-for _, row in df7.iterrows():
-    client_code = row["ClientCode"]
-    cash_eq = row["CashEquivalent"]
-    non_cash = row["NonCash"]
+    for _, row in df7.iterrows():
+        client_code = row["ClientCode"]
+        cash_eq = row["CashEquivalent"]
+        non_cash = row["NonCash"]
 
-    # If duplicate ClientCode found → handle manually
-    if client_code in collateral_violation_lookup:
-        # Example: take last value (overwrite)
-        # collateral_violation_lookup[client_code] = {"CashEquivalent": cash_eq, "NonCash": non_cash}
+        # If duplicate ClientCode found → handle manually
+        if client_code in collateral_violation_lookup:
+            # Example: take last value (overwrite)
+            # collateral_violation_lookup[client_code] = {"CashEquivalent": cash_eq, "NonCash": non_cash}
 
-        # OR: sum values instead
-        collateral_violation_lookup[client_code]["CashEquivalent"] = cash_eq
-        collateral_violation_lookup[client_code]["NonCash"] = non_cash
-    else:
-        collateral_violation_lookup[client_code] = {
-            "CashEquivalent": cash_eq,
-            "NonCash": non_cash
-        }
-
+            # OR: sum values instead
+            collateral_violation_lookup[client_code]["CashEquivalent"] = cash_eq
+            collateral_violation_lookup[client_code]["NonCash"] = non_cash
+        else:
+            collateral_violation_lookup[client_code] = {
+                "CashEquivalent": cash_eq,
+                "NonCash": non_cash
+            }
+'''
 # Step 1: Read raw file without header
 header_row = None
 
 # Step 1: Scan file for "GSEC" in first column
 with open(SEC_PLEDGE, "r", encoding="utf-8", errors="ignore") as f:
+    lines = f.readlines()
     for idx, line in enumerate(f):
         first_col = line.split(",")[0].strip()  # only check first column
         if first_col.upper() == "GSEC":
             print(f"✅ Found 'GSEC' at line {idx}")
             header_row = idx + 1  # header is next line
             break
-
+# breakpoint()
 if header_row is None:
     raise ValueError("'GSEC' not found in first column of file!")
 
@@ -256,10 +268,10 @@ df8.columns = df8.columns.str.strip()
 _sec_pledge_lookup = {}
 
 for _, row in df8.iterrows():
-    client_code = row['Client/CP code']
-    isin = row['ISIN']
-    gross_value = row['GROSS VALUE']
-    haircut = row['HAIRCUT']
+    client_code = row["Client/CP code"]
+    isin = row["ISIN"]
+    gross_value = row["GROSS VALUE"]
+    haircut = row["HAIRCUT"]
 
     if not client_code or not isin:
         continue  # skip incomplete rows
@@ -271,71 +283,129 @@ for _, row in df8.iterrows():
         "HAIRCUT": haircut
     }
 
-sec_pledge_lookup = build_cp_lookup(_sec_pledge_lookup)
+'''
 
-print("######## sec pledge lookup :", sec_pledge_lookup)
+# below is part of sec pledge report
 
-# Create list of lists
-data = []
+if False:
+    import csv
+
+    _sec_pledge_lookup = {}
+
+    with open(SEC_PLEDGE, newline='', encoding="utf-8", errors="ignore") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+
+    # Step 1: Find where "GSEC" occurs in first column
+    header_row = None
+    for idx, row in enumerate(rows):
+        if row and row[0].strip().upper() == "GSEC":
+            print(f"✅ Found 'GSEC' at line {idx}")
+            # Prefer next line if it looks like header
+            header_row = idx + 1
+            break
+
+    if header_row is None:
+        raise ValueError("'GSEC' not found in file")
+
+    # Step 2: Extract headers and data
+    headers = [col.strip() for col in rows[header_row]]
+    data_rows = rows[header_row + 1:]
+
+    # Step 3: Build lookup dictionary
+    try:
+        col_client = headers.index("Client/CP code")
+        col_isin = headers.index("ISIN")
+        col_gross = headers.index("GROSS VALUE")
+        col_haircut = headers.index("HAIRCUT")
+    except ValueError as e:
+        raise ValueError(f"❌ Expected column missing: {e}")
+
+    for row in data_rows:
+        if len(row) <= max(col_client, col_isin, col_gross, col_haircut):
+            continue  # skip short/incomplete rows
+
+        client_code = row[col_client].strip()
+        isin = row[col_isin].strip()
+        gross_value = row[col_gross].strip()
+        haircut = row[col_haircut].strip()
+
+        if not client_code or not isin:
+            continue
+
+        key = f"{client_code}-{isin}"
+        _sec_pledge_lookup[key] = {
+            "GROSS VALUE": gross_value,
+            "HAIRCUT": haircut,
+        }
+
+    print("✅ Lookup ready with", len(_sec_pledge_lookup), "entries")
+
+    sec_pledge_lookup = build_cp_lookup(_sec_pledge_lookup)
+
+    print("######## sec pledge lookup :", sec_pledge_lookup)
+
+    # Create list of lists
+    data = []
 
 
-for cp, pan_no in zip(cp_codes_fo, pan_fo):
-    cv_lookup = collateral_violation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
-    row = {
-        A : date,
-        B : pan,
-        C : pan,
-        D : cp,
-        E : pan_no,
-        G : account_type,
-        H : FO,
-        J : fo_collateral_lookup.get(cp, 0),  # Default to 0 if CP Code not found
-        K : fo_daily_margin_lookup.get(cp, 0),
-        L : fo_daily_margin_lookup.get(cp, 0),
-        O : cv_lookup["CashEquivalent"],
-        P : cv_lookup["NonCash"],
-        BB: sec_pledge_lookup.get(cp, 0),
-        BD: sec_pledge_lookup.get(cp, 0),
-        BF: sec_pledge_lookup.get(cp, 0)
-    }
-    
-    # duplicate values in other columns
-    row[AD] = row[K]
-    row[AV] = row[K]
-    row[AG] = row[O]
-    row[AW] = row[O]
-    row[AH] = row[P]
-    row[AX] = row[P]
+    for cp, pan_no in zip(cp_codes_fo, pan_fo):
+        cv_lookup = collateral_violation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
+        row = {
+            A : date,
+            B : pan,
+            C : pan,
+            D : cp,
+            E : pan_no,
+            G : account_type,
+            H : FO,
+            J : fo_collateral_lookup.get(cp, 0),  # Default to 0 if CP Code not found
+            K : fo_daily_margin_lookup.get(cp, 0),
+            L : fo_daily_margin_lookup.get(cp, 0),
+            O : cv_lookup["CashEquivalent"],
+            P : cv_lookup["NonCash"],
+            BB: sec_pledge_lookup.get(cp, 0),
+            BD: sec_pledge_lookup.get(cp, 0),
+            BF: sec_pledge_lookup.get(cp, 0)
+        }
+        
+        # duplicate values in other columns
+        row[AD] = row[K]
+        row[AV] = row[K]
+        row[AG] = row[O]
+        row[AW] = row[O]
+        row[AH] = row[P]
+        row[AX] = row[P]
 
-    data.append(row)
+        data.append(row)
 
-for cp, pan_no in zip(cp_codes_cd, pan_cd):
-    cv_lookup = collateral_violation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
-    row = {
-        A : date,
-        B : pan,
-        C : pan,
-        D : cp,
-        E : pan_no,
-        G : account_type,
-        H : CD,
-        J : cd_collateral_lookup.get(cp, 0),  # Default to 0 if CP Code not found
-        K : cd_daily_margin_lookup.get(cp, 0),
-        L : cd_daily_margin_lookup.get(cp, 0),
-        O : cv_lookup["CashEquivalent"],
-        P : cv_lookup["NonCash"],
-    }
-    # duplicate values in other columns
-    row[AD] = row[K]
-    row[AV] = row[K]
-    row[AG] = row[O]
-    row[AW] = row[O]
-    row[AH] = row[P]
-    row[AX] = row[P]
+    for cp, pan_no in zip(cp_codes_cd, pan_cd):
+        cv_lookup = collateral_violation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
+        row = {
+            A : date,
+            B : pan,
+            C : pan,
+            D : cp,
+            E : pan_no,
+            G : account_type,
+            H : CD,
+            J : cd_collateral_lookup.get(cp, 0),  # Default to 0 if CP Code not found
+            K : cd_daily_margin_lookup.get(cp, 0),
+            L : cd_daily_margin_lookup.get(cp, 0),
+            O : cv_lookup["CashEquivalent"],
+            P : cv_lookup["NonCash"],
+        }
+        # duplicate values in other columns
+        row[AD] = row[K]
+        row[AV] = row[K]
+        row[AG] = row[O]
+        row[AW] = row[O]
+        row[AH] = row[P]
+        row[AX] = row[P]
 
-    data.append(row)
+        data.append(row)
 
-write_file(outpath, data=data, header=segregation_headers)
+    write_file(outpath, data=data, header=segregation_headers)
 
 # CSV file, header is 3rd row
 # df1 = read_file(FO_MSATER_FILE)
