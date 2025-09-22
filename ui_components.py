@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkcalendar import DateEntry
 from datetime import datetime, timedelta
-
+from  CONSTANT_SEGREGATION import H , D, G
 
 class BasePage:
     """Base class for all pages"""
@@ -743,7 +743,7 @@ class SegregationReportPage(BasePage):
         # CP PAN field
         tk.Label(date_pan_frame, text="Trading member PAN:", font=('Arial', 12, 'bold'),
                 bg=self.bg_color, fg='#2c3e50').pack(side=tk.LEFT)
-        self.cp_pan_var = tk.StringVar()
+        self.cp_pan_var = tk.StringVar(value="AACCO4820B")  # Default value
         tk.Entry(date_pan_frame, textvariable=self.cp_pan_var, width=20,
                 font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
 
@@ -1020,7 +1020,7 @@ class SegregationReportPage(BasePage):
         
         # Instructions
         instructions = tk.Label(form_frame, 
-                              text="💡 Select Table Type and fill the form, then click 'Add Record'.\nClick on a record to edit it. All data is automatically saved to master JSON file.",
+                              text="AV col name 'Fixed deposit receipt (FDR) placed with NCL', AT col name 'Cash placed with NCL'\n💡 Select Table Type and fill the form, then click 'Add Record'.\nClick on a record to edit it. All data is automatically saved to master JSON file.",
                               font=('Arial', 9, 'italic'), bg=self.bg_color, fg='#666666')
         instructions.pack(pady=(5, 10))
         
@@ -1148,14 +1148,14 @@ class SegregationReportPage(BasePage):
                 for record in self.master_records_data:
                     if table_type == "AV_Records":
                         values = (
-                            record.get('account_type', ''),
-                            record.get('segment', ''),
+                            record.get(G, ''),
+                            record.get(H, ''),
                             record.get('av_value', '')
                         )
                     else:  # AT_Records
                         values = (
-                            record.get('cp_code', ''),
-                            record.get('segment', ''),
+                            record.get(D, ''),
+                            record.get(H, ''),
                             record.get('at_value', '')
                         )
                     self.records_tree.insert('', 'end', values=values)
@@ -1222,12 +1222,12 @@ class SegregationReportPage(BasePage):
             
             # Add to data table
             self.records_tree.insert('', 'end', values=(account_type, segment, value))
-            
+
             # Add to JSON data
             record = {
                 'id': len(self.master_records_data),
-                'account_type': account_type,
-                'segment': segment,
+                 G : account_type,
+                 H : segment,
                 'av_value': value,
                 'table_type': table_type
             }
@@ -1249,8 +1249,8 @@ class SegregationReportPage(BasePage):
             # Add to JSON data
             record = {
                 'id': len(self.master_records_data),
-                'cp_code': cp_code,
-                'segment': segment,
+                 D : cp_code,
+                 H : segment,
                 'at_value': value,
                 'table_type': table_type
             }
@@ -1277,13 +1277,13 @@ class SegregationReportPage(BasePage):
             
             if table_type == "AV_Records":
                 # Check for duplicate Account Type + Segment combination
-                if (record.get('account_type') == first_field and 
-                    record.get('segment') == segment):
+                if (record.get(G) == first_field and 
+                    record.get(H) == segment):
                     return True
             else:  # AT_Records
                 # Check for duplicate CP Code + Segment combination
-                if (record.get('cp_code') == first_field and 
-                    record.get('segment') == segment):
+                if (record.get(D) == first_field and 
+                    record.get(H) == segment):
                     return True
         return False
     
@@ -1343,8 +1343,8 @@ class SegregationReportPage(BasePage):
             # Update in data
             if 0 <= self.selected_record_id < len(self.master_records_data):
                 self.master_records_data[self.selected_record_id].update({
-                    'account_type': account_type,
-                    'segment': segment,
+                    G : account_type,
+                    H : segment,
                     'av_value': value
                 })
             
@@ -1369,8 +1369,8 @@ class SegregationReportPage(BasePage):
             # Update in data
             if 0 <= self.selected_record_id < len(self.master_records_data):
                 self.master_records_data[self.selected_record_id].update({
-                    'cp_code': cp_code,
-                    'segment': segment,
+                    D : cp_code,
+                    H : segment,
                     'at_value': value
                 })
             
@@ -1497,6 +1497,5 @@ class SegregationReportPage(BasePage):
             'cash_with_ncl': self.cash_with_ncl_var.get(),   # ✅ Added here
             'santom_file': self.santom_file_var.get(),
             'extra_records': self.extra_records_file.get(),
-            'master_records_data': self._get_master_records_data(),  # ✅ Master records data (AV & AT)
             'output_path': self.segregation_output_var.get()
         }

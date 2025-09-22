@@ -17,6 +17,8 @@ from db_manager import insert_report
 from physical_settlement_files import build_dict, segregate_excel_by_column
 from itertools import groupby
 from operator import itemgetter
+import json
+import os
 
 class BaseProcessor:
     """Base class for all processors"""
@@ -594,7 +596,7 @@ class SegregationReportProcessor(BaseProcessor):
         try:
             # Import segregation functions
             from segregation import read_file, write_file, build_cp_lookup
-            from CONSTANT_SEGREGATION import segregation_headers, A, B, C, D, E, F, G, H, I, J, K, L, O, P, AD, AV, AG, AW, AH, AX, BB, BD, BF
+            from CONSTANT_SEGREGATION import segregation_headers, A, B, C, D, E, F, G, H, I, J, K, L, O, P, AD, AV, AG, AW, AH, AX, BB, BD, BF, AT
             
             # Format date for output
             formatted_date = datetime.strptime(date, "%d/%m/%Y").strftime("%d-%m-%Y")
@@ -693,6 +695,12 @@ class SegregationReportProcessor(BaseProcessor):
             )
             data = self._segregation_data_filter(data, segregation_headers=segregation_headers[9:])
             # breakpoint()
+
+            # Load master records using simple dynamic function
+            av_records, at_records = self._get_master_records() # Get Both AV and AT Records (Default):
+            # 2. Get Only AV or AT Records:
+            # av_records = self._get_master_records(av=True) at_records = self._get_master_records(at=True)
+            # all_records = self._get_master_records(all_records=True)
             
             # Add extra records
             if extra_records:
@@ -701,11 +709,56 @@ class SegregationReportProcessor(BaseProcessor):
                     for _, row in extra_records_df.iterrows():
                         record = {}
                         for col in extra_records_df.columns:
-                            record[col] = row[col]
+                            val = row[col]
+
+                            if col == A:
+                                try:
+                                    if isinstance(val, pd.Timestamp):
+                                        val = val.strftime("%d-%m-%Y")
+                                    elif isinstance(val, str):
+                                        # normalize strings like "2025-09-18 00:00:00"
+                                        val = val.split(" ")[0]
+                                    else:
+                                        val = ""
+                                except Exception:
+                                    val = ""
+                                
+                            record[col] = val
+                        
+                        # Custom logic
+                        # if str(row.get(G, "")).strip() == "P" and str(row.get(H, "")).strip() == "FO":
+                        #     # Lookup in AV_Records
+                        #     for av_record in av_records:
+                        #         if (
+                        #             av_record.get(G) == "P" and
+                        #             av_record.get(H) == "FO"
+                        #         ):
+                        #             record[AV] = av_record["av_value"]
+                        #             break  # stop at first match
+
                         data.append(record)
                 except Exception as e:
                     raise Exception(f"❌ Error reading Extra_Records_File:\n\nPlease check if the correct Extra_Records_File is attached.\n\nTechnical details: {str(e)}")
             
+            # Loop through data (list of dictionaries) and apply AT records logic
+            # print(f" Processing data with AT records logic...")
+            for i, data_record in enumerate(data):
+                # Loop through AT records to find matches
+                for at_record in at_records:
+                    at_cp_code = at_record.get(D, '')
+                    at_segment = at_record.get(H, '')
+                    at_value = float(at_record.get("at_value", 0))
+                    
+                    # Check if current data record matches AT record criteria
+                    if (data_record.get(D, '') == at_cp_code and 
+                        data_record.get(H, '') == at_segment):
+                        
+                        # Apply AT logic to this data record
+
+                        data_record[AV] = data_record[AD] - at_value
+                        # print(f"  Applied AT logic to record {i+1}: CP Code={at_cp_code}, Segment={at_segment}, AT Value={at_value}")
+                        break  # Stop at first match
+
             try:
                 santom_df = read_file(santom_file)
                 data = self._santom_file_working(data, cash_with_ncl, santom_df)
@@ -967,7 +1020,15 @@ class SegregationReportProcessor(BaseProcessor):
             # Copy all columns from santom_df to record
             for col in santom_df.columns:
                 record[col] = row[col]
-            
+                # try:
+                #     float_val = float(row[col])
+                #     if float_val.is_integer():
+                #         record[col] = int(float_val)  # 123.0 → 123
+                #     else:
+                #         record[col] = float_val       # 123.45 → 123.45
+                # except:
+                #     record[col] = row[col]            # Keep as string if conversion fails
+
             # Check if Account Type is "P" and perform special processing
             if G in santom_df.columns and row[G] == "P":
                 # For Account Type "P", calculate balance and assign to AV
@@ -1028,3 +1089,45 @@ class SegregationReportProcessor(BaseProcessor):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         insert_report(self.db_path, report_type="SEGREGATION_REPORT", 
                      created_at=timestamp, modified_at=timestamp, report_blob=zip_blob)
+    
+    def _get_master_records(self, av=False, at=False, all_records=False):
+        """
+        Simple function to get master records based on flags
+        
+        Args:
+            av (bool): Return AV_Records if True
+            at (bool): Return AT_Records if True  
+            all_records (bool): Return all records combined if True
+            
+        Returns:
+            list: Requested records
+        """
+        import json
+        import os
+        
+        master_records_json_path = "master_records.json"
+        av_records = []
+        at_records = []
+
+        if os.path.exists(master_records_json_path):
+            try:
+                with open(master_records_json_path, 'r') as f:
+                    all_master_data = json.load(f)
+
+                av_records = all_master_data.get('AV_Records', [])
+                at_records = all_master_data.get('AT_Records', [])
+
+                # print(f"✅ Loaded {len(av_records)} AV records and {len(at_records)} AT records")
+
+            except Exception as e:
+                print(f"❌ Error reading master records JSON: {e}")
+        
+        # Return based on flags
+        if av:
+            return av_records
+        elif at:
+            return at_records
+        elif all_records:
+            return av_records + at_records
+        else:
+            return av_records, at_records  # Default: return both separately
