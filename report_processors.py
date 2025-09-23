@@ -19,6 +19,8 @@ from itertools import groupby
 from operator import itemgetter
 import json
 import os
+import tkinter as tk
+from tkinter import messagebox
 
 class BaseProcessor:
     """Base class for all processors"""
@@ -37,6 +39,26 @@ class BaseProcessor:
                 os.makedirs(output_path)
             except Exception as e:
                 raise Exception(f"Cannot create output directory: {str(e)}")
+    
+    def handle_file_permission_error(self, file_path, operation="read"):
+        """Show user-friendly popup for file permission errors"""
+        filename = os.path.basename(file_path)
+        
+        try:
+            root = tk.Tk()
+            root.withdraw()  # Hide the main window
+            
+            message = f"Cannot {operation} the file:\n{filename}\n\nPlease close the file and try again."
+            
+            messagebox.showerror("File Access Error", message)
+            root.destroy()
+        except Exception:
+            # Fallback if tkinter is not available
+            print(f"❌ File Permission Error: Cannot {operation} file {filename}")
+            print("Please close the file and try again.")
+        
+        # Return a special value to indicate permission error was handled
+        return "PERMISSION_ERROR_HANDLED"
 
 
 class MonthlyFloatProcessor(BaseProcessor):
@@ -306,16 +328,24 @@ class NMASSAllocationProcessor(BaseProcessor):
         """Read file with appropriate method based on extension"""
         ext = os.path.splitext(file_path)[1].lower()
         
-        if ext == ".csv":
-            df = pd.read_csv(file_path, **kwargs)
-        elif ext in [".xls", ".xlsx"]:
-            df = pd.read_excel(file_path, sheet_name=selected_sheet or 0, **kwargs)
-        else:
-            raise ValueError(f"Unsupported file type: {ext}")
-        
-        # Drop rows where all columns are NaN
-        df = df.dropna(how='all')
-        return df
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(file_path, **kwargs)
+            elif ext in [".xls", ".xlsx"]:
+                df = pd.read_excel(file_path, sheet_name=selected_sheet or 0, **kwargs)
+            else:
+                raise ValueError(f"Unsupported file type: {ext}")
+            
+            # Drop rows where all columns are NaN
+            df = df.dropna(how='all')
+            return df
+        except PermissionError:
+            self.handle_file_permission_error(file_path, "read")
+        except Exception as e:
+            if "Permission denied" in str(e) or "being used by another process" in str(e):
+                self.handle_file_permission_error(file_path, "read")
+            else:
+                raise e
     
     def _get_next_file_path(self, output_path, base_name, dt):
         """Generate the next available file path by incrementing T000X"""
@@ -530,7 +560,7 @@ class SegregationReportProcessor(BaseProcessor):
     def process(self, date, cp_pan, cash_collateral_cds, cash_collateral_fno,
                 daily_margin_nsecr, daily_margin_nsefno, x_cp_master, f_cp_master,
                 collateral_valuation_cds, collateral_valuation_fno,
-                # sec_pledge, 
+                sec_pledge, 
                 cash_with_ncl, santom_file, extra_records, output_path):
         """Process segregation report files"""
         try:
@@ -539,7 +569,7 @@ class SegregationReportProcessor(BaseProcessor):
                                daily_margin_nsecr=daily_margin_nsecr, daily_margin_nsefno=daily_margin_nsefno,
                                x_cp_master=x_cp_master, f_cp_master=f_cp_master,
                                collateral_valuation_cds=collateral_valuation_cds, collateral_valuation_fno=collateral_valuation_fno, 
-                            #   sec_pledge=sec_pledge,
+                              sec_pledge=sec_pledge,
                                cash_with_ncl=cash_with_ncl, santom_file=santom_file, extra_records=extra_records)
             self.create_output_directory(output_path)
             
@@ -548,7 +578,7 @@ class SegregationReportProcessor(BaseProcessor):
                 date, cp_pan, cash_collateral_cds, cash_collateral_fno,
                 daily_margin_nsecr, daily_margin_nsefno, x_cp_master, f_cp_master,
                 collateral_valuation_cds, collateral_valuation_fno, 
-                # sec_pledge, 
+                sec_pledge, 
                 cash_with_ncl, santom_file, extra_records, output_path
             )
             
@@ -569,6 +599,8 @@ class SegregationReportProcessor(BaseProcessor):
         # Check required files
         missing_files = []
         for file_name, file_path in file_paths.items():
+            if file_name == "cash_with_ncl" or file_name == "santom_file":
+                continue
             if not file_path.strip():
                 missing_files.append(file_name.replace('_', ' ').title())
         
@@ -590,7 +622,7 @@ class SegregationReportProcessor(BaseProcessor):
     def _process_segregation_files(self, date, cp_pan, cash_collateral_cds, cash_collateral_fno,
                                 daily_margin_nsecr, daily_margin_nsefno, x_cp_master, f_cp_master,
                                 collateral_valuation_cds, collateral_valuation_fno, 
-                                # sec_pledge, 
+                                sec_pledge, 
                                 cash_with_ncl, santom_file, extra_records, output_path):
         """Process all segregation files and generate the final report"""
         try:
@@ -607,27 +639,39 @@ class SegregationReportProcessor(BaseProcessor):
                 cp_codes_fo = df_fo["CP Code"].tolist()
                 pan_fo = df_fo["PAN Number"].tolist()
             except Exception as e:
-                raise Exception(f"❌ Error reading F_CPMaster_data file:\n\nPlease check if the correct F_CPMaster_data file is attached.\n\nTechnical details: {str(e)}")
+                if "permission error" in str(e).lower():
+                    return self.handle_file_permission_error(f_cp_master, "read")
+                else:
+                    raise Exception(f"❌ Error reading F_CPMaster_data file:\n\nPlease check if the correct F_CPMaster_data file is attached.\n\nTechnical details: {str(e)}")
             
             try:
                 df_cd = read_file(x_cp_master)
                 cp_codes_cd = df_cd["CP Code"].tolist()
                 pan_cd = df_cd["PAN Number"].tolist()
             except Exception as e:
-                raise Exception(f"❌ Error reading X_CPMaster_data file:\n\nPlease check if the correct X_CPMaster_data file is attached.\n\nTechnical details: {str(e)}")
+                if "permission error" in str(e).lower():
+                    return self.handle_file_permission_error(x_cp_master, "read")
+                else:
+                    raise Exception(f"❌ Error reading X_CPMaster_data file:\n\nPlease check if the correct X_CPMaster_data file is attached.\n\nTechnical details: {str(e)}")
             
             # Read Cash Collateral files
             try:
                 df_cash_cds = read_file(cash_collateral_cds, header_row=9, usecols="B:I")
                 cd_collateral_lookup = dict(zip(df_cash_cds["ClientCode"], df_cash_cds["TotalCollateral"]))
             except Exception as e:
-                raise Exception(f"❌ Error reading CashCollateral_CDS file:\n\nPlease check if the correct CashCollateral_CDS file is attached.\n\nTechnical details: {str(e)}")
+                if "permission error" in str(e).lower():
+                    return self.handle_file_permission_error(cash_collateral_cds, "read")
+                else:
+                    raise Exception(f"❌ Error reading CashCollateral_CDS file:\n\nPlease check if the correct CashCollateral_CDS file is attached.\n\nTechnical details: {str(e)}")
             
             try:
                 df_cash_fno = read_file(cash_collateral_fno, header_row=9, usecols="B:I")
                 fo_collateral_lookup = dict(zip(df_cash_fno["ClientCode"], df_cash_fno["TotalCollateral"]))
             except Exception as e:
-                raise Exception(f"❌ Error reading CashCollateral_FNO file:\n\nPlease check if the correct CashCollateral_FNO file is attached.\n\nTechnical details: {str(e)}")
+                if "permission error" in str(e).lower():
+                    return self.handle_file_permission_error(cash_collateral_fno, "read")
+                else:
+                    raise Exception(f"❌ Error reading CashCollateral_FNO file:\n\nPlease check if the correct CashCollateral_FNO file is attached.\n\nTechnical details: {str(e)}")
             
             # Read Daily Margin files
             try:
@@ -642,7 +686,7 @@ class SegregationReportProcessor(BaseProcessor):
             except Exception as e:
                 raise Exception(f"❌ Error reading Daily Margin Report NSEFNO file:\n\nPlease check if the correct Daily Margin Report NSEFNO file is attached.\n\nTechnical details: {str(e)}")
             
-            # Read Collateral Violation Report CD
+            # Read Collateral Valuation Report CD
             try:
                 df_valuation_cd = read_file(collateral_valuation_cds, header_row=9, usecols="B:H")
                 cd_collateral_valuation_lookup = {}
@@ -661,9 +705,9 @@ class SegregationReportProcessor(BaseProcessor):
                             "NonCash": non_cash
                         }
             except Exception as e:
-                raise Exception(f"❌ Error reading Collateral Violation Report CDS file:\n\nPlease check if the correct Collateral Violation Report CDS file is attached.\n\nTechnical details: {str(e)}")
+                raise Exception(f"❌ Error reading Collateral Valuation Report CDS file:\n\nPlease check if the correct Collateral Valuation Report CDS file is attached.\n\nTechnical details: {str(e)}")
 
-            # Read Collateral Violation Report FO
+            # Read Collateral Valuation Report FO
             try:
                 df_valuation_fo = read_file(collateral_valuation_fno, header_row=9, usecols="B:H")
                 fo_collateral_valuation_lookup = {}
@@ -682,10 +726,16 @@ class SegregationReportProcessor(BaseProcessor):
                             "NonCash": non_cash
                         }
             except Exception as e:
-                raise Exception(f"❌ Error reading Collateral Violation Report FNO file:\n\nPlease check if the correct Collateral Violation Report FNO file is attached.\n\nTechnical details: {str(e)}")
+                raise Exception(f"❌ Error reading Collateral Valuation Report FNO file:\n\nPlease check if the correct Collateral Valuation Report FNO file is attached.\n\nTechnical details: {str(e)}")
             
             # Process Security Pledge file
-            sec_pledge_cp_lookup = {} #self._process_security_pledge_file(sec_pledge)
+            try:
+                sec_pledge_cp_lookup = self._process_security_pledge_file(sec_pledge)
+            except Exception as e:
+                if "permission error" in str(e).lower():
+                    return self.handle_file_permission_error(sec_pledge, "read")
+                else:
+                    raise Exception(f"❌ Error reading Security Pledge file:\n\nPlease check if the correct Security Pledge file is attached.\n\nTechnical details: {str(e)}")
             
             # Generate report data
             data = self._generate_report_data(
@@ -693,16 +743,14 @@ class SegregationReportProcessor(BaseProcessor):
                 fo_collateral_lookup, fo_daily_margin_lookup, cd_collateral_lookup, 
                 cd_daily_margin_lookup, cd_collateral_valuation_lookup,fo_collateral_valuation_lookup, sec_pledge_cp_lookup
             )
-            data = self._segregation_data_filter(data, segregation_headers=segregation_headers[9:])
-            # breakpoint()
-
             # Load master records using simple dynamic function
             av_records, at_records = self._get_master_records() # Get Both AV and AT Records (Default):
             # 2. Get Only AV or AT Records:
             # av_records = self._get_master_records(av=True) at_records = self._get_master_records(at=True)
             # all_records = self._get_master_records(all_records=True)
             
-            # Add extra records
+            # Process extra records first
+            extra_records_data = []
             if extra_records:
                 try:
                     extra_records_df = read_file(extra_records)
@@ -712,33 +760,29 @@ class SegregationReportProcessor(BaseProcessor):
                             val = row[col]
 
                             if col == A:
-                                try:
-                                    if isinstance(val, pd.Timestamp):
-                                        val = val.strftime("%d-%m-%Y")
-                                    elif isinstance(val, str):
-                                        # normalize strings like "2025-09-18 00:00:00"
-                                        val = val.split(" ")[0]
-                                    else:
-                                        val = ""
-                                except Exception:
-                                    val = ""
+                                # Use formatted_date from frontend instead of parsing from data
+                                val = formatted_date
                                 
                             record[col] = val
                         
                         # Custom logic
-                        # if str(row.get(G, "")).strip() == "P" and str(row.get(H, "")).strip() == "FO":
-                        #     # Lookup in AV_Records
-                        #     for av_record in av_records:
-                        #         if (
-                        #             av_record.get(G) == "P" and
-                        #             av_record.get(H) == "FO"
-                        #         ):
-                        #             record[AV] = av_record["av_value"]
-                        #             break  # stop at first match
+                        if str(row.get(G, "")).strip() == "P" and str(row.get(H, "")).strip() == "FO":
+                            # Lookup in AV_Records
+                            for av_record in av_records:
+                                if (
+                                    av_record.get(G) == "P" and
+                                    av_record.get(H) == "FO"
+                                ):
+                                    record[AV] = av_record["av_value"]
+                                    break  # stop at first match
 
-                        data.append(record)
+
+                        extra_records_data.append(record)
                 except Exception as e:
                     raise Exception(f"❌ Error reading Extra_Records_File:\n\nPlease check if the correct Extra_Records_File is attached.\n\nTechnical details: {str(e)}")
+            
+            # Filter main data and add extra records in correct position
+            data = self._segregation_data_filter(data, segregation_headers=segregation_headers[9:], extra_records=extra_records_data)
             
             # Loop through data (list of dictionaries) and apply AT records logic
             # print(f" Processing data with AT records logic...")
@@ -756,24 +800,37 @@ class SegregationReportProcessor(BaseProcessor):
                         # Apply AT logic to this data record
 
                         data_record[AV] = data_record[AD] - at_value
+                        data_record[AT] = at_value
+
                         # print(f"  Applied AT logic to record {i+1}: CP Code={at_cp_code}, Segment={at_segment}, AT Value={at_value}")
                         break  # Stop at first match
-
-            try:
-                santom_df = read_file(santom_file)
-                data = self._santom_file_working(data, cash_with_ncl, santom_df)
-            except Exception as e:
-                raise Exception(f"❌ Error reading SANTOM_FILE:\n\nPlease check if the correct SANTOM_FILE is attached.\n\nTechnical details: {str(e)}")
+            
+            if santom_file:
+                try:
+                    santom_df = read_file(santom_file)
+                    data = self._santom_file_working(data, cash_with_ncl, santom_df)
+                except Exception as e:
+                    raise Exception(f"❌ Error reading SANTOM_FILE:\n\nPlease check if the correct SANTOM_FILE is attached.\n\nTechnical details: {str(e)}")
 
             # Write output file
-            output_file = os.path.join(output_path, f"{cp_pan}_{formatted_date.replace('-', '')}_01.xlsx")
+            output_file = os.path.join(output_path, f"{cp_pan}_{formatted_date.replace('-', '')}_01.csv")
             write_file(output_file, data=data, header=segregation_headers)
+
+            # Also save the CSV into a ZIP with the same base name
+            try:
+                csv_base_name = os.path.splitext(os.path.basename(output_file))[0]
+                csv_zip_path = os.path.join(output_path, f"{csv_base_name}.zip")
+                with zipfile.ZipFile(csv_zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zipf:
+                    zipf.write(output_file, os.path.basename(output_file))
+            except Exception as zip_err:
+                # Non-fatal: proceed even if CSV zip creation fails
+                print(f"Warning: Failed to create CSV ZIP: {zip_err}")
 
             # Create ZIP and save to database
             self._create_zip_and_save(
                 cash_collateral_cds, cash_collateral_fno, daily_margin_nsecr, daily_margin_nsefno,
                 x_cp_master, f_cp_master, collateral_valuation_cds, collateral_valuation_fno, 
-                # sec_pledge,
+                sec_pledge,
                 output_file, output_path
             )
             
@@ -786,94 +843,102 @@ class SegregationReportProcessor(BaseProcessor):
     
     def _process_security_pledge_file(self, sec_pledge):
         """Process security pledge file"""
-        # Step 1: Scan file for "GSEC" in first column
-        # header_row = None
-        # with open(sec_pledge, "r", encoding="utf-8", errors="ignore") as f:
-        #     for idx, line in enumerate(f):
-        #         first_col = line.split(",")[0].strip()
-        #         if first_col.upper() == "GSEC":
-        #             print(f"✅ Found 'GSEC' at line {idx}")
-        #             header_row = idx + 1
-        #             break
+        from segregation import read_file, GSEC_HEADER, SRNO,CPCODE,SEGMENT,ISIN,PLEDGE_TYPE,SEC_NAME,MATURITY_DATE,PRICE,QUANTITY,MKT_VALUE,HAIRCUT,HAIRCUT_VALUE,POST_HAIRCUT, D, H
 
-        # if header_row is None:
-        #     raise ValueError("'GSEC' not found in first column of file!")
-
-        # # Step 2: Read CSV using the detected header row
-        # df8 = pd.read_csv(sec_pledge, header=header_row, engine="python")
-        # df8.columns = df8.columns.str.strip()
-
-        # _sec_pledge_lookup = {}
-        # for _, row in df8.iterrows():
-        #     client_code = row['Client/CP code']
-        #     isin = row['ISIN']
-        #     gross_value = row['GROSS VALUE']
-        #     haircut = row['HAIRCUT']
-
-        #     if not client_code or not isin:
-        #         continue
-
-        #     key = f"{client_code}-{isin}"
-        #     _sec_pledge_lookup[key] = {
-        #         "GROSS VALUE": gross_value,
-        #         "HAIRCUT": haircut
-        #     }
+        gsec_df = read_file(
+                        sec_pledge,
+                        header_row=0,
+                        sheet_name="Valuation_G-Sec"
+                    )
+        gsec_df.columns = gsec_df.columns.str.strip()  # removes leading/trailing spaces
 
         _sec_pledge_lookup = {}
 
-        with open(sec_pledge, newline='', encoding="utf-8", errors="ignore") as f:
-            reader = csv.reader(f)
-            rows = list(reader)
+        for idx, row in gsec_df.iterrows():
+            cp_code = str(row[CPCODE]).strip()
+            segment = str(row[SEGMENT]).strip()
+            pledge_type = str(row[PLEDGE_TYPE]).strip()
+            post_haircut = float(row[POST_HAIRCUT]) if pd.notna(row[POST_HAIRCUT]) else 0.0
 
-        # Step 1: Find where "GSEC" occurs in first column
-        header_row = None
-        for idx, row in enumerate(rows):
-            if row and row[0].strip().upper() == "GSEC":
-                print(f"✅ Found 'GSEC' at line {idx}")
-                # Prefer next line if it looks like header
-                header_row = idx + 1
-                break
+            # Only include FNO + E-Kuber rows
+            if segment == "FNO" and pledge_type == "E-Kuber":
+                if cp_code not in _sec_pledge_lookup:
+                    _sec_pledge_lookup[cp_code] = {
+                        H: segment,
+                        D: cp_code,
+                        "post_haircut": 0.0
+                    }
+                # Add to total
+                _sec_pledge_lookup[cp_code]["post_haircut"] += post_haircut
+        
+        print("sec pledge ==>", _sec_pledge_lookup)
+        # Round final values (Excel-like behavior)
+        for cp_code in _sec_pledge_lookup:
+            _sec_pledge_lookup[cp_code]["post_haircut"] = round(
+                _sec_pledge_lookup[cp_code]["post_haircut"], 2
+            )
+        
+        return _sec_pledge_lookup
 
-        if header_row is None:
-            raise ValueError("'GSEC' not found in file")
+        # sec plesge file logic is below
+        if False:
+            with open(sec_pledge, newline='', encoding="utf-8", errors="ignore") as f:
+                reader = csv.reader(f)
+                rows = list(reader)
 
-        # Step 2: Extract headers and data
-        headers = [col.strip() for col in rows[header_row]]
-        data_rows = rows[header_row + 1:]
+            # Step 1: Find where "GSEC" occurs in first column
+            header_row = None
+            for idx, row in enumerate(rows):
+                if row and row[0].strip().upper() == "GSEC":
+                    print(f"✅ Found 'GSEC' at line {idx}")
+                    # Prefer next line if it looks like header
+                    header_row = idx + 1
+                    break
 
-        # Step 3: Build lookup dictionary
-        try:
-            col_client = headers.index("Client/CP code")
-            col_isin = headers.index("ISIN")
-            col_gross = headers.index("GROSS VALUE")
-            col_haircut = headers.index("HAIRCUT")
-        except ValueError as e:
-            raise ValueError(f"❌ Expected column missing: {e}")
+            if header_row is None:
+                raise ValueError("'GSEC' not found in file")
 
-        for row in data_rows:
-            if len(row) <= max(col_client, col_isin, col_gross, col_haircut):
-                continue  # skip short/incomplete rows
+            # Step 2: Extract headers and data
+            headers = [col.strip() for col in rows[header_row]]
+            data_rows = rows[header_row + 1:]
 
-            client_code = row[col_client].strip()
-            isin = row[col_isin].strip()
-            gross_value = row[col_gross].strip()
-            haircut = row[col_haircut].strip()
+            # Step 3: Build lookup dictionary
+            try:
+                col_client = headers.index("Client/CP code")
+                col_isin = headers.index("ISIN")
+                col_gross = headers.index("GROSS VALUE")
+                col_haircut = headers.index("HAIRCUT")
+            except ValueError as e:
+                raise ValueError(f"❌ Expected column missing: {e}")
 
-            if not client_code or not isin:
-                continue
+            for row in data_rows:
+                if len(row) <= max(col_client, col_isin, col_gross, col_haircut):
+                    continue  # skip short/incomplete rows
 
-            key = f"{client_code}-{isin}"
-            _sec_pledge_lookup[key] = {
-                "GROSS VALUE": gross_value,
-                "HAIRCUT": haircut,
-            }
+                client_code = row[col_client].strip()
+                isin = row[col_isin].strip()
+                gross_value = row[col_gross].strip()
+                haircut = row[col_haircut].strip()
 
-        from segregation import build_cp_lookup
-        return build_cp_lookup(_sec_pledge_lookup)
+                if not client_code or not isin:
+                    continue
+
+                key = f"{client_code}-{isin}"
+                _sec_pledge_lookup[key] = {
+                    "GROSS VALUE": gross_value,
+                    "HAIRCUT": haircut,
+                }
+
+            from segregation import build_cp_lookup
+            return build_cp_lookup(_sec_pledge_lookup)
     
-    def _generate_report_data(self, formatted_date, cp_pan, cp_codes_fo, pan_fo, cp_codes_cd, pan_cd,
-                            fo_collateral_lookup, fo_daily_margin_lookup, cd_collateral_lookup, 
-                            cd_daily_margin_lookup, cd_collateral_valuation_lookup, fo_collateral_valuation_lookup, sec_pledge_cp_lookup):
+    def _generate_report_data(self, formatted_date, cp_pan, 
+                              cp_codes_fo, pan_fo, 
+                              cp_codes_cd, pan_cd,
+                              fo_collateral_lookup, fo_daily_margin_lookup, 
+                              cd_collateral_lookup, cd_daily_margin_lookup, 
+                              cd_collateral_valuation_lookup, fo_collateral_valuation_lookup, 
+                              sec_pledge_cp_lookup):
         """Generate report data for both FO and CD segments"""
         from CONSTANT_SEGREGATION import A, B, C, D, E, F, G, H, I, J, K, L, O, P, AD, AV, AG, AW, AH, AX, BB, BD, BF
         
@@ -898,9 +963,9 @@ class SegregationReportProcessor(BaseProcessor):
                 L: fo_daily_margin_lookup.get(cp, 0),
                 O: cv_lookup["CashEquivalent"],
                 P: cv_lookup["NonCash"],
-                BB: cv_lookup["CashEquivalent"],
-                BD: cv_lookup["CashEquivalent"],
-                BF: cv_lookup["CashEquivalent"]
+                # BB: cv_lookup["CashEquivalent"],
+                # BD: cv_lookup["CashEquivalent"],
+                # BF: cv_lookup["CashEquivalent"]
             }
             
             # Duplicate values in other columns
@@ -910,7 +975,18 @@ class SegregationReportProcessor(BaseProcessor):
             row[AW] = row[O]
             row[AH] = row[P]
             row[AX] = row[P]
-            
+
+            # Apply post_haircut only for FO
+            if sec_pledge_cp_lookup:
+                pledge_info = sec_pledge_cp_lookup.get(cp)                
+                if pledge_info and pledge_info.get(H) == "FNO":
+                    val = pledge_info.get("post_haircut", 0.0)
+                    row[BB] = val
+                    row[BD] = val
+                    row[BF] = val
+                    print("cp code - ", cp)
+                    print("BB,BD,BF",val)
+
             data.append(row)
         
         # Process CD data
@@ -931,9 +1007,9 @@ class SegregationReportProcessor(BaseProcessor):
                 L: cd_daily_margin_lookup.get(cp, 0),
                 O: cv_lookup["CashEquivalent"],
                 P: cv_lookup["NonCash"],
-                BB: cv_lookup["CashEquivalent"],
-                BD: cv_lookup["CashEquivalent"],
-                BF: cv_lookup["CashEquivalent"]
+                # BB: cv_lookup["CashEquivalent"],
+                # BD: cv_lookup["CashEquivalent"],
+                # BF: cv_lookup["CashEquivalent"]
             }
             
             # Duplicate values in other columns
@@ -943,19 +1019,30 @@ class SegregationReportProcessor(BaseProcessor):
             row[AW] = row[O]
             row[AH] = row[P]
             row[AX] = row[P]
+
+            # Apply post_haircut only for FO
+            if sec_pledge_cp_lookup:
+                pledge_info = sec_pledge_cp_lookup.get(cp)
+                print("####### pledge_info", pledge_info)
+                if pledge_info and pledge_info.get(H) == "CDS":
+                    val = pledge_info.get("post_haircut", 0.0)
+                    row[BB] = val
+                    row[BD] = val
+                    row[BF] = val
             
             data.append(row)
         
         return data
     
-    def _segregation_data_filter(self, data, segregation_headers, cp_code_col="CP Code", seg_col="Segment Indicator"):
+    def _segregation_data_filter(self, data, segregation_headers, cp_code_col="CP Code", seg_col="Segment Indicator", extra_records=None):
         """
         Filter and normalize segregation data:
         1. Replace blank/NA values with 0 for segregation_headers
         2. Sort by CP Code
         3. Sort by Segment Indicator
         4. Move all-zero rows to the end
-
+        5. Set AZ and BL to "NA" for all records
+        
         Args:
             data (list[dict]): list of row dictionaries
             segregation_headers (list[str]): expected headers for segregation
@@ -965,6 +1052,7 @@ class SegregationReportProcessor(BaseProcessor):
         Returns:
             list[dict]: filtered and sorted data
         """
+        from CONSTANT_SEGREGATION import AZ, BL
         # Step 1: Normalize data - replace blank/NA values with 0 for segregation_headers
         normalized = []
         for row in data:
@@ -983,9 +1071,10 @@ class SegregationReportProcessor(BaseProcessor):
                     new_row[key] = val
 
             normalized.append(new_row)
-
-        # Step 2 & 3: Sort by CP Code A to Z, then by Segment Indicator A to Z within each CP Code group
-        seg_sorted = sorted(normalized, key=lambda x: (str(x.get(cp_code_col, "")).strip().upper(), str(x.get(seg_col, "")).strip().upper()))
+        
+        # print(normalized[:5])
+        # Step 2 & 3: Sort only by Segment Indicator A to Z
+        seg_sorted = sorted(normalized, key=lambda x: str(x.get(seg_col, "")).strip().upper())
         
         # Step 4: Move all-zero rows to the end
         def is_all_zero(row):
@@ -1006,8 +1095,16 @@ class SegregationReportProcessor(BaseProcessor):
             else:
                 non_zero_rows.append(row)
         
-        # Combine: non-zero rows first, then zero rows
-        final_data = non_zero_rows + zero_rows
+        # Combine: non-zero rows first, then extra records, then zero rows
+        if extra_records:
+            final_data = non_zero_rows + extra_records + zero_rows
+        else:
+            final_data = non_zero_rows + zero_rows
+
+        # Set AZ and BL to "NA" for all records centrally
+        for row in final_data:
+            row[AZ] = "NA"
+            row[BL] = "NA"
 
         return final_data
 
@@ -1054,7 +1151,7 @@ class SegregationReportProcessor(BaseProcessor):
 
     def _create_zip_and_save(self, cash_collateral_cds, cash_collateral_fno, daily_margin_nsecr, 
                            daily_margin_nsefno, x_cp_master, f_cp_master, cd_collateral_valuation_lookup, fo_collateral_valuation_lookup,
-                            #  sec_pledge, 
+                             sec_pledge, 
                              output_file, output_path):
         """Create ZIP file and save to database"""
         # Create ZIP file
@@ -1073,7 +1170,7 @@ class SegregationReportProcessor(BaseProcessor):
                 (f_cp_master, "F_CPMaster_data.xlsx"),
                 (cd_collateral_valuation_lookup, "Collateral Valuation Report_cds.xls"),
                 (fo_collateral_valuation_lookup, "Collateral Valuation Report_fno.xls"),
-                # (sec_pledge, "F_90123_SEC_PLEDGE_09092025_02.csv.gz")
+                (sec_pledge, "G-Sec Valuation.xlsx")
             ]
             
             for file_path, arcname in input_files:

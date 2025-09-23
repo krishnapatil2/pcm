@@ -66,6 +66,22 @@ BM = "Cash Collateral for MTF positions"
 
 segregation_headers = [A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,AA,AB,AC,AD,AE,AF,AG,AH,AI,AJ,AK,AL,AM,AN,AO,AP,AQ,AR,AS,AT,AU,AV,AW,AX,AY,AZ,BA,BB,BC,BD,BE,BF,BG,BH,BI,BJ,BK,BL,BM]
 
+SRNO = "Sr No"
+CPCODE = "CP CODE"
+SEGMENT = "SEGMENT"
+ISIN = "ISIN"
+PLEDGE_TYPE = "PLEDGE TYPE"
+SEC_NAME = "Security Name"
+MATURITY_DATE = "MATURITY DATE"
+PRICE = "PRICE"
+QUANTITY = "QUANTITY"
+MKT_VALUE = "MARKET VALUE"
+HAIRCUT = "HAIRCUT"
+HAIRCUT_VALUE = "HAIRCUT VALUE"
+POST_HAIRCUT = "POST HAIRCUT"
+
+GSEC_HEADER = [SRNO,CPCODE,SEGMENT,ISIN,PLEDGE_TYPE,SEC_NAME,MATURITY_DATE,PRICE,QUANTITY,MKT_VALUE,HAIRCUT,HAIRCUT_VALUE,POST_HAIRCUT]
+
 CO_FIXED_DATA = [[
     "08-09-2025","AACCO4820B","AACCO4820B","DBSBK0000189","AAGCD0792B","", "C","CO","", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0","0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "NA","0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "NA", "0"],
 [

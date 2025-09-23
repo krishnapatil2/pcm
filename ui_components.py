@@ -779,7 +779,7 @@ class SegregationReportPage(BasePage):
         self.f_cp_master_var = tk.StringVar()
         self.collateral_valuation_cds_var = tk.StringVar()
         self.collateral_valuation_fno_var = tk.StringVar()
-        # self.sec_pledge_var = tk.StringVar()
+        self.sec_pledge_var = tk.StringVar()
         self.cash_with_ncl_var = tk.StringVar()
         self.santom_file_var = tk.StringVar()
         self.extra_records_file = tk.StringVar()
@@ -847,13 +847,13 @@ class SegregationReportPage(BasePage):
                 ("X_CPMaster_data", "self.x_cp_master_var"),
                 ("F_CPMaster_data", "self.f_cp_master_var")
             ]),
-            ("Collateral Violation Report:", [
-                ("Collateral Violation Report CDS", "self.collateral_valuation_cds_var"),
-                ("Collateral Violation Report FNO", "self.collateral_valuation_fno_var")
+            ("Collateral Valuation Report:", [
+                ("Collateral Valuation Report CDS", "self.collateral_valuation_cds_var"),
+                ("Collateral Valuation Report FNO", "self.collateral_valuation_fno_var")
             ]),
-            # ("Security Pledge File:", [
-            #     ("F_90123_SEC_PLEDGE", "self.sec_pledge_var")
-            # ]),
+            ("Gsec File:", [
+                ("Gsec File", "self.sec_pledge_var")
+            ]),
             #  Add manual input before Santom file
             ("Santom File:", [
                 ("SANTOM_FILE", "self.santom_file_var"),
@@ -1493,8 +1493,8 @@ class SegregationReportPage(BasePage):
             'f_cp_master': self.f_cp_master_var.get(),
             'collateral_valuation_cds': self.collateral_valuation_cds_var.get(),
             'collateral_valuation_fno': self.collateral_valuation_fno_var.get(),
-            # 'sec_pledge': self.sec_pledge_var.get(),
-            'cash_with_ncl': self.cash_with_ncl_var.get(),   # ✅ Added here
+            'sec_pledge': self.sec_pledge_var.get(),
+            'cash_with_ncl': self.cash_with_ncl_var.get(),   #  Added here
             'santom_file': self.santom_file_var.get(),
             'extra_records': self.extra_records_file.get(),
             'output_path': self.segregation_output_var.get()

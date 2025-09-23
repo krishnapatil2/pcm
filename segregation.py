@@ -60,7 +60,7 @@ def build_cp_lookup(sec_pledge_lookup):
     # cp_lookup = {cp: round(val, 2) for cp, val in cp_lookup.items()}
     return cp_lookup
 
-def read_file(file_path: str, header_row: int = 0, usecols=None) -> pd.DataFrame:
+def read_file(file_path: str, header_row: int = 0, usecols=None, sheet_name=None) -> pd.DataFrame:
     """
     Dynamically read CSV, XLS, or XLSX file into a Pandas DataFrame.
     
@@ -96,14 +96,22 @@ def read_file(file_path: str, header_row: int = 0, usecols=None) -> pd.DataFrame
                     engine="python",
                     on_bad_lines="skip"  # skip problematic rows
                 )
+        elif sheet_name:
+            _engine = "openpyxl" if ext == ".xlsx" else "xlrd"
+            df = pd.read_excel(file_path, header=header_row, usecols=usecols, sheet_name=sheet_name, engine=_engine)
         elif ext == ".xlsx":
             df = pd.read_excel(file_path, header=header_row, usecols=usecols, engine="openpyxl")
         elif ext == ".xls":
             df = pd.read_excel(file_path, header=header_row, usecols=usecols, engine="xlrd")
         else:
             raise ValueError(f"Unsupported file type: {ext}")
+    except PermissionError:
+        raise RuntimeError(f"File permission error: Please close {os.path.basename(file_path)} and try again.")
     except Exception as e:
-        raise RuntimeError(f"Error reading {file_path}: {str(e)}")
+        if "Permission denied" in str(e) or "being used by another process" in str(e):
+            raise RuntimeError(f"File permission error: Please close {os.path.basename(file_path)} and try again.")
+        else:
+            raise RuntimeError(f"Error reading {file_path}: {str(e)}")
     
     return df
 
@@ -156,7 +164,7 @@ def write_file(file_path: str, data: list[dict], header: list[str]) -> None:
 
 CASHCOLLATERAL_CDS = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\CashCollateral_cds.xls'
 CASHCOLLATERAL_FNO = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\CashCollateral_fno.xls'
-COLLATERAL_VIOLATION_REPORT = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Collateral Valuation Report.xls'
+COLLATERAL_VALUATION_REPORT = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Collateral Valuation Report.xls'
 DAILY_MARGIN_NSECR_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Daily Margin Report NSECR.xls'
 DAILY_MARGIN_NSEFNO_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\Daily Margin Report NSEFNO.xls'
 FO_MSATER_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Segregation 6\F_CPMaster_data.xlsx'
@@ -172,7 +180,7 @@ SEC_PLEDGE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop
 # DAILY_MARGIN_NSECR_FILE =  r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Daily Margin Report NSECR.xls'
 # DAILY_MARGIN_NSEFNO_FILE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Daily Margin Report NSEFNO.xls'
 
-# COLLATERAL_VIOLATION_REPORT = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Collateral Valuation Report.xls'
+# COLLATERAL_VALUATION_REPORT = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\Collateral Valuation Report.xls'
 # SEC_PLEDGE = r'C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files\BOD\F_90123_SEC_PLEDGE_09092025_02.csv\F_90123_SEC_PLEDGE_09092025_02.csv'
 
 
@@ -220,9 +228,9 @@ if False:
     df6 = read_file(DAILY_MARGIN_NSEFNO_FILE, header_row=9, usecols="B:T")  # because row 10 is the header
     fo_daily_margin_lookup = dict(zip(df6["ClientCode"], df6["Funds"]))
 
-    df7 = read_file(COLLATERAL_VIOLATION_REPORT, header_row=9, usecols="B:H")
+    df7 = read_file(COLLATERAL_VALUATION_REPORT, header_row=9, usecols="B:H")
     # Build lookup: {ClientCode: {"CashEquivalent": x, "NonCash": y}}
-    collateral_violation_lookup = {}
+    collateral_valuation_lookup = {}
 
     for _, row in df7.iterrows():
         client_code = row["ClientCode"]
@@ -230,15 +238,15 @@ if False:
         non_cash = row["NonCash"]
 
         # If duplicate ClientCode found → handle manually
-        if client_code in collateral_violation_lookup:
+        if client_code in collateral_valuation_lookup:
             # Example: take last value (overwrite)
-            # collateral_violation_lookup[client_code] = {"CashEquivalent": cash_eq, "NonCash": non_cash}
+            # collateral_valuation_lookup[client_code] = {"CashEquivalent": cash_eq, "NonCash": non_cash}
 
             # OR: sum values instead
-            collateral_violation_lookup[client_code]["CashEquivalent"] = cash_eq
-            collateral_violation_lookup[client_code]["NonCash"] = non_cash
+            collateral_valuation_lookup[client_code]["CashEquivalent"] = cash_eq
+            collateral_valuation_lookup[client_code]["NonCash"] = non_cash
         else:
-            collateral_violation_lookup[client_code] = {
+            collateral_valuation_lookup[client_code] = {
                 "CashEquivalent": cash_eq,
                 "NonCash": non_cash
             }
@@ -350,7 +358,7 @@ if False:
 
 
     for cp, pan_no in zip(cp_codes_fo, pan_fo):
-        cv_lookup = collateral_violation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
+        cv_lookup = collateral_valuation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
         row = {
             A : date,
             B : pan,
@@ -380,7 +388,7 @@ if False:
         data.append(row)
 
     for cp, pan_no in zip(cp_codes_cd, pan_cd):
-        cv_lookup = collateral_violation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
+        cv_lookup = collateral_valuation_lookup.get(cp, {"CashEquivalent": 0, "NonCash": 0})
         row = {
             A : date,
             B : pan,

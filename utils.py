@@ -99,7 +99,7 @@ class MessageHandler:
             "Segregation Report": {
                 "title": "Segregation Report Generation:\n",
                 "description": [
-                    "- Upload all required files: Cash Collateral (CDS & FNO), Daily Margin Reports (NSECR & NSEFNO), CP Master Data (X & F), Collateral Violation Report, and Security Pledge file.",
+                    "- Upload all required files: Cash Collateral (CDS & FNO), Daily Margin Reports (NSECR & NSEFNO), CP Master Data (X & F), Collateral Valuation Report, and Security Pledge file.",
                     "- Enter the Date and CP PAN for the report.",
                     "- The application will process all files and generate a comprehensive segregation report.",
                     "- Supports both regular CSV and compressed (.gz) files for Security Pledge data.",
