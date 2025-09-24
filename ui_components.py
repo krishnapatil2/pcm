@@ -798,14 +798,14 @@ class SegregationReportPage(BasePage):
         # Dynamic table configuration - FUTURE-PROOF!
         self.table_configurations = {
             "AV_Records": {
-                "columns": ["Account Type", "Segment", "AV Value"],
-                "column_widths": [120, 120, 200],
+                "columns": ["Account Type", "CP Code", "Segment", "AV Value"],
+                "column_widths": [120, 160, 120, 200],
                 "fields": [
                     {"name": "Account Type", "type": "combobox", "values": ["P", "C"], "var": "account_type_var", "default": "P"},
                     {"name": "Segment", "type": "combobox", "values": ["CD", "CM", "CO", "FO"], "var": "segment_var", "default": "FO"},
                     {"name": "AV Value", "type": "entry", "var": "av_value_var", "default": ""}
                 ],
-                "data_mapping": {"account_type": 0, "segment": 1, "av_value": 2}
+                "data_mapping": {"account_type": 0, "cp_code": 1, "segment": 2, "av_value": 3}
             },
             "AT_Records": {
                 "columns": ["CP Code", "Segment", "AT Value"],
@@ -931,13 +931,29 @@ class SegregationReportPage(BasePage):
         self.cp_code_entry.grid(row=1, column=1, padx=(0, 20), sticky=tk.W, pady=(5, 0))
         self.cp_code_entry.grid_remove()  # Hide initially
         
+        # CP Code (for AV when Account Type = C) - initially hidden
+        self.cp_code_label_av = tk.Label(controls_frame, text="CP Code:", font=('Arial', 11, 'bold'),
+                                       bg=self.bg_color, fg='#2c3e50')
+        self.cp_code_label_av.grid(row=1, column=2, sticky=tk.W, padx=(0, 10), pady=(5, 0))
+        self.cp_code_label_av.grid_remove()
+
+        self.cp_code_entry_av = tk.Entry(controls_frame, textvariable=self.cp_code_var, width=18, font=('Arial', 10))
+        self.cp_code_entry_av.grid(row=1, column=3, padx=(0, 20), sticky=tk.W, pady=(5, 0))
+        self.cp_code_entry_av.grid_remove()
+
         # Segment Dropdown (Row 1)
         tk.Label(controls_frame, text="Segment:", font=('Arial', 11, 'bold'),
-                bg=self.bg_color, fg='#2c3e50').grid(row=1, column=2, sticky=tk.W, padx=(0, 10), pady=(5, 0))
+                bg=self.bg_color, fg='#2c3e50').grid(row=1, column=4, sticky=tk.W, padx=(0, 10), pady=(5, 0))
         
         segment_combo = ttk.Combobox(controls_frame, textvariable=self.segment_var,
                                    values=['CD', 'CM', 'CO', 'FO'], state='readonly', width=15)
-        segment_combo.grid(row=1, column=3, padx=(0, 20), sticky=tk.W, pady=(5, 0))
+        segment_combo.grid(row=1, column=5, padx=(0, 20), sticky=tk.W, pady=(5, 0))
+
+        # React to Account Type change to show/hide CP Code inline for AV
+        try:
+            self.account_type_var.trace_add('write', lambda *args: self._on_account_type_change())
+        except Exception:
+            pass
         segment_combo.set('FO')  # Default to FO
         
         
@@ -950,7 +966,7 @@ class SegregationReportPage(BasePage):
                 bg=self.bg_color, fg='#2c3e50').pack(anchor=tk.W, pady=(0, 5))
         
         # Create Treeview for data table (will be updated based on table type)
-        self.table_columns = ('Account Type', 'Segment', 'AV Value')
+        self.table_columns = ('Account Type', 'CP Code', 'Segment', 'AV Value')
         self.records_tree = ttk.Treeview(table_frame, columns=self.table_columns, show='headings', height=6)
         
         # Define initial headings manually (will be updated later)
@@ -1124,9 +1140,31 @@ class SegregationReportPage(BasePage):
         
         # Reset segment to default FO for both table types
         self.segment_var.set("FO")
+        # Reset CP Code field
+        self.cp_code_var.set("")
+        # Ensure CP Code inline visibility matches current type/state
+        self._on_account_type_change()
         
         # Reload records for the selected table type
         self._load_records_from_json()
+
+    def _on_account_type_change(self):
+        """Show/hide CP Code inline for AV when Account Type == 'C'"""
+        try:
+            table_type = self.table_type_var.get()
+            account_type = self.account_type_var.get()
+            if table_type == "AV_Records" and account_type == 'C':
+                # Show CP Code inline widgets
+                if hasattr(self, 'cp_code_label_av') and hasattr(self, 'cp_code_entry_av'):
+                    self.cp_code_label_av.grid()
+                    self.cp_code_entry_av.grid()
+            else:
+                # Hide CP Code inline widgets
+                if hasattr(self, 'cp_code_label_av') and hasattr(self, 'cp_code_entry_av'):
+                    self.cp_code_label_av.grid_remove()
+                    self.cp_code_entry_av.grid_remove()
+        except Exception:
+            pass
     
     def _load_records_from_json(self):
         """Load existing records from JSON file"""
@@ -1148,9 +1186,10 @@ class SegregationReportPage(BasePage):
                 for record in self.master_records_data:
                     if table_type == "AV_Records":
                         values = (
-                            record.get(G, ''),
-                            record.get(H, ''),
-                            record.get('av_value', '')
+                            record.get(G, ''),                 # Account Type
+                            record.get(D, ''),                 # CP Code (optional for C)
+                            record.get(H, ''),                 # Segment
+                            record.get('av_value', '')         # AV Value
                         )
                     else:  # AT_Records
                         values = (
@@ -1213,20 +1252,29 @@ class SegregationReportPage(BasePage):
             if not account_type:
                 messagebox.showwarning("Warning", "Please select an Account Type!")
                 return
+
+            cp_code = self.cp_code_var.get().strip()
+
+            # For Account Type C, CP Code is required and displayed
+            if account_type == 'C' and not cp_code:
+                messagebox.showwarning("Warning", "Please enter a CP Code for Account Type 'C'!")
+                return
             
-            # Check for duplicate combination of Account Type + Segment
-            if self._check_duplicate_record(account_type, segment, table_type):
+            # Check for duplicate combination of (Account Type, optional CP Code) + Segment
+            key_first = f"{account_type}:{cp_code}" if account_type == 'C' else account_type
+            if self._check_duplicate_record(key_first, segment, table_type):
                 messagebox.showwarning("Duplicate Record", 
-                                     f"A record with Account Type '{account_type}' and Segment '{segment}' already exists!")
+                                     f"A record with Account Type '{account_type}'{f' and CP Code {cp_code}' if account_type=='C' else ''} and Segment '{segment}' already exists!")
                 return
             
             # Add to data table
-            self.records_tree.insert('', 'end', values=(account_type, segment, value))
+            self.records_tree.insert('', 'end', values=(account_type, cp_code, segment, value))
 
             # Add to JSON data
             record = {
                 'id': len(self.master_records_data),
                  G : account_type,
+                 D : cp_code if account_type == 'C' else '',
                  H : segment,
                 'av_value': value,
                 'table_type': table_type
@@ -1276,10 +1324,22 @@ class SegregationReportPage(BasePage):
                 continue
             
             if table_type == "AV_Records":
-                # Check for duplicate Account Type + Segment combination
-                if (record.get(G) == first_field and 
-                    record.get(H) == segment):
-                    return True
+                # For AV Records, uniqueness is:
+                # - Account Type 'P': (Account Type + Segment)
+                # - Account Type 'C': (Account Type + CP Code + Segment)
+                rec_account_type = record.get(G)
+                rec_segment = record.get(H)
+                rec_cp_code = record.get(D, '')
+
+                if rec_account_type == 'C':
+                    # first_field is formatted as "C:<cp_code>" for checks
+                    if first_field.startswith('C:'):
+                        _, ff_cp = first_field.split(':', 1)
+                        if (ff_cp == rec_cp_code and rec_segment == segment):
+                            return True
+                else:
+                    if (rec_account_type == first_field and rec_segment == segment):
+                        return True
             else:  # AT_Records
                 # Check for duplicate CP Code + Segment combination
                 if (record.get(D) == first_field and 
@@ -1302,11 +1362,16 @@ class SegregationReportPage(BasePage):
             table_type = self.table_type_var.get()
             if table_type == "AV_Records":
                 self.account_type_var.set(values[0])  # Account Type
+                self.cp_code_var.set(values[1])       # CP Code (optional for C)
             else:  # AT_Records
                 self.cp_code_var.set(values[0])  # CP Code
             
-            self.segment_var.set(values[1])
-            self.av_value_var.set(values[2])
+            if table_type == "AV_Records":
+                self.segment_var.set(values[2])
+                self.av_value_var.set(values[3])
+            else:
+                self.segment_var.set(values[1])
+                self.av_value_var.set(values[2])
             
             # Get the record ID
             item_index = self.records_tree.index(selected_item[0])
@@ -1328,29 +1393,32 @@ class SegregationReportPage(BasePage):
         
         if table_type == "AV_Records":
             account_type = self.account_type_var.get()
+            cp_code = self.cp_code_var.get().strip()
             # Validation
-            if not account_type or not segment or not value:
-                messagebox.showwarning("Warning", "Please fill all fields!")
+            if not account_type or not segment or not value or (account_type == 'C' and not cp_code):
+                messagebox.showwarning("Warning", "Please fill all required fields!")
                 return
             
             # Check for duplicate combination (exclude current record being updated)
+            key_first = f"{account_type}:{cp_code}" if account_type == 'C' else account_type
             current_record_id = self.master_records_data[self.selected_record_id].get('id') if 0 <= self.selected_record_id < len(self.master_records_data) else None
-            if self._check_duplicate_record(account_type, segment, table_type, exclude_id=current_record_id):
+            if self._check_duplicate_record(key_first, segment, table_type, exclude_id=current_record_id):
                 messagebox.showwarning("Duplicate Record", 
-                                     f"A record with Account Type '{account_type}' and Segment '{segment}' already exists!")
+                                     f"A record with Account Type '{account_type}'{f' and CP Code {cp_code}' if account_type=='C' else ''} and Segment '{segment}' already exists!")
                 return
             
             # Update in data
             if 0 <= self.selected_record_id < len(self.master_records_data):
                 self.master_records_data[self.selected_record_id].update({
                     G : account_type,
+                    D : cp_code if account_type == 'C' else '',
                     H : segment,
                     'av_value': value
                 })
             
             # Update in table
             selected_item = self.records_tree.selection()[0]
-            self.records_tree.item(selected_item, values=(account_type, segment, value))
+            self.records_tree.item(selected_item, values=(account_type, cp_code, segment, value))
             
         else:  # AT_Records
             cp_code = self.cp_code_var.get().strip()

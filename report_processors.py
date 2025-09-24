@@ -749,6 +749,28 @@ class SegregationReportProcessor(BaseProcessor):
             # av_records = self._get_master_records(av=True) at_records = self._get_master_records(at=True)
             # all_records = self._get_master_records(all_records=True)
             
+            # print("####### av_records -", av_records)
+            for data_record in data:
+                try:
+                    cp_key = str(data_record.get(D, "")).strip()
+                    seg_key = str(data_record.get(H, "")).strip()
+                    if not (cp_key and seg_key):
+                        continue
+
+                    for av_record in av_records or []:
+                        av_cp = (av_record.get(D) or "").strip()
+                        av_seg = (av_record.get(H) or "").strip()
+                        if av_cp == cp_key and av_seg == seg_key:
+                            av_val_raw = av_record.get("av_value") if "av_value" in av_record else av_record.get(AV)
+                            if av_val_raw not in (None, ""):
+                                try:
+                                    data_record[AV] = float(av_val_raw)
+                                except Exception:
+                                    pass
+                            break  # stop at first match
+                except Exception:
+                    continue
+
             # Process extra records first
             extra_records_data = []
             if extra_records:
@@ -871,7 +893,6 @@ class SegregationReportProcessor(BaseProcessor):
                 # Add to total
                 _sec_pledge_lookup[cp_code]["post_haircut"] += post_haircut
         
-        print("sec pledge ==>", _sec_pledge_lookup)
         # Round final values (Excel-like behavior)
         for cp_code in _sec_pledge_lookup:
             _sec_pledge_lookup[cp_code]["post_haircut"] = round(
@@ -984,8 +1005,6 @@ class SegregationReportProcessor(BaseProcessor):
                     row[BB] = val
                     row[BD] = val
                     row[BF] = val
-                    print("cp code - ", cp)
-                    print("BB,BD,BF",val)
 
             data.append(row)
         
@@ -1023,7 +1042,6 @@ class SegregationReportProcessor(BaseProcessor):
             # Apply post_haircut only for FO
             if sec_pledge_cp_lookup:
                 pledge_info = sec_pledge_cp_lookup.get(cp)
-                print("####### pledge_info", pledge_info)
                 if pledge_info and pledge_info.get(H) == "CDS":
                     val = pledge_info.get("post_haircut", 0.0)
                     row[BB] = val
@@ -1144,7 +1162,7 @@ class SegregationReportProcessor(BaseProcessor):
                 if AG in santom_df.columns:
                     record[AW] = row[AG]
                 if AX in santom_df.columns:
-                    record[AH] = row[AX]
+                    record[AX] = row[AH]
 
             data.append(record)
         return data

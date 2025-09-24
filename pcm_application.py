@@ -2,6 +2,7 @@
 PCM Application - Refactored Version
 Clean, modular, and maintainable code structure
 """
+# C:\Users\KrishnaPatil\OneDrive - Dovetail Capital Pvt ltd\Desktop\PCM Files
 
 import sys
 import os
@@ -233,145 +234,78 @@ class PCMApplication:
             self.pages[page_name].pack(fill=tk.BOTH, expand=True)
     
     # Processing handlers
+    def _handle_process(self, processor_key, page_key, success_title, build_success_msg):
+        """Generic processor execution and messaging handler to avoid duplication."""
+        try:
+            values = self.pages[page_key].get_values()
+            result = self.processors[processor_key].process(**values)
+            if result is None or "error" in str(result).lower() or result == "PERMISSION_ERROR_HANDLED":
+                if result == "PERMISSION_ERROR_HANDLED":
+                    return
+                elif result is None:
+                    self.message_handler.show_error("Error", "❌ Processing failed. Please check the logs for details.")
+                else:
+                    self.message_handler.show_error("Error", f"❌ Failed: {result}")
+            else:
+                msg = build_success_msg(values, result)
+                self.message_handler.show_success(success_title, msg)
+        except Exception as e:
+            if "file permission error" not in str(e).lower():
+                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
+
     def _process_monthly_float(self):
         """Process monthly float report"""
-        try:
-            values = self.pages['monthly_float'].get_values()
-            result = self.processors['monthly_float'].process(**values)
-            
-            # Check if result indicates success or failure
-            if result is None or "error" in str(result).lower() or result == "PERMISSION_ERROR_HANDLED":
-                # Result indicates failure
-                if result == "PERMISSION_ERROR_HANDLED":
-                    # Permission error popup was already shown, do nothing
-                    pass
-                elif result is None:
-                    # Generic failure - show error message
-                    self.message_handler.show_error("Error", "❌ Processing failed. Please check the logs for details.")
-                else:
-                    # Other error - show the error message
-                    self.message_handler.show_error("Error", f"❌ Failed: {result}")
-            else:
-                # Result indicates success
-                msg = (
-                    f"✅ Excel created successfully!\n\n"
-                    f"📊 FNO Files Processed: {result['fno_count']}\n"
-                    f"📊 MCX Files Processed: {result['mcx_count']}\n"
-                    f"ℹ️ Missing Dates Filled: {result['missing_filled']} rows\n"
-                    f"ℹ️ Monthly Status: Missing dates have been filled automatically. Please check the monthly_status.txt file.\n"
-                    f"📂 Reconciliation Note: Kindly verify and reconcile the final merged data with:\n"
-                    f"   - merged_fno_mcx_data.xlsx\n"
-                    f"   - cp_code_separate_sheets.xlsx.\n\n"
-                    f"   - And process for the Next Step\n"
-                    f"📁 Output File: {result['output_file']}"
-                )
-                
-                self.message_handler.show_success("Process Complete", msg)
-            
-        except Exception as e:
-            # Don't show error if it was a permission error (already shown as popup)
-            if "file permission error" not in str(e).lower():
-                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
-    
+        def _msg(values, result):
+            return (
+                f"✅ Excel created successfully!\n\n"
+                f"📊 FNO Files Processed: {result['fno_count']}\n"
+                f"📊 MCX Files Processed: {result['mcx_count']}\n"
+                f"ℹ️ Missing Dates Filled: {result['missing_filled']} rows\n"
+                f"ℹ️ Monthly Status: Missing dates have been filled automatically. Please check the monthly_status.txt file.\n"
+                f"📂 Reconciliation Note: Kindly verify and reconcile the final merged data with:\n"
+                f"   - merged_fno_mcx_data.xlsx\n"
+                f"   - cp_code_separate_sheets.xlsx.\n\n"
+                f"   - And process for the Next Step\n"
+                f"📁 Output File: {result['output_file']}"
+            )
+        self._handle_process('monthly_float', 'monthly_float', "Process Complete", _msg)
+
     def _process_nmass_allocation(self):
         """Process NMASS allocation report"""
-        try:
-            values = self.pages['nmass_allocation'].get_values()
-            result = self.processors['nmass_allocation'].process(**values)
-            
-            # Check if result indicates success or failure
-            if result is None or "error" in str(result).lower() or result == "PERMISSION_ERROR_HANDLED":
-                # Result indicates failure
-                if result == "PERMISSION_ERROR_HANDLED":
-                    # Permission error popup was already shown, do nothing
-                    pass
-                elif result is None:
-                    # Generic failure - show error message
-                    self.message_handler.show_error("Error", "❌ Processing failed. Please check the logs for details.")
-                else:
-                    # Other error - show the error message
-                    self.message_handler.show_error("Error", f"❌ Failed: {result}")
-            else:
-                # Result indicates success
-                msg = f"✅ NMASS Allocation Report completed successfully!\n\n" \
-                      f"📅 Selected Date: {values['date']}\n" \
-                      f"📄 Selected Sheet: {values['sheet']}\n" \
-                      f"📎 Attachment 1: {os.path.basename(values['input1'])}\n" \
-                      f"📎 Attachment 2: {os.path.basename(values['input2'])}\n" \
-                      f"📁 Output Folder: {values['output_path']}\n\n" \
-                      f"📊 Processing Results:\n{result}"
-                
-                self.message_handler.show_success("Generate NMASS Allocation Report", msg)
-            
-        except Exception as e:
-            # Don't show error if it was a permission error (already shown as popup)
-            if "file permission error" not in str(e).lower():
-                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
-    
+        def _msg(values, result):
+            return (
+                f"✅ NMASS Allocation Report completed successfully!\n\n"
+                f"📅 Selected Date: {values['date']}\n"
+                f"📄 Selected Sheet: {values['sheet']}\n"
+                f"📎 Attachment 1: {os.path.basename(values['input1'])}\n"
+                f"📎 Attachment 2: {os.path.basename(values['input2'])}\n"
+                f"📁 Output Folder: {values['output_path']}\n\n"
+                f"📊 Processing Results:\n{result}"
+            )
+        self._handle_process('nmass_allocation', 'nmass_allocation', "Generate NMASS Allocation Report", _msg)
+
     def _process_obligation_settlement(self):
         """Process obligation settlement"""
-        try:
-            values = self.pages['obligation_settlement'].get_values()
-            result = self.processors['obligation_settlement'].process(**values)
-            
-            # Check if result indicates success or failure
-            if result is None or "error" in str(result).lower() or result == "PERMISSION_ERROR_HANDLED":
-                # Result indicates failure
-                if result == "PERMISSION_ERROR_HANDLED":
-                    # Permission error popup was already shown, do nothing
-                    pass
-                elif result is None:
-                    # Generic failure - show error message
-                    self.message_handler.show_error("Error", "❌ Processing failed. Please check the logs for details.")
-                else:
-                    # Other error - show the error message
-                    self.message_handler.show_error("Error", f"❌ Failed: {result}")
-            else:
-                # Result indicates success
-                msg = f"✅ Physical Settlement Processing completed successfully!\n\n" \
-                      f"📁 Output Folder: {values['output_path']}\n" \
-                      f"💾 Backup stored in database.\n\n" \
-                      f"📊 Processing Results:\n{result}"
-                
-                self.message_handler.show_success("Success", msg)
-            
-        except Exception as e:
-            # Don't show error if it was a permission error (already shown as popup)
-            if "file permission error" not in str(e).lower():
-                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
-    
+        def _msg(values, result):
+            return (
+                f"✅ Physical Settlement Processing completed successfully!\n\n"
+                f"📁 Output Folder: {values['output_path']}\n"
+                f"💾 Backup stored in database.\n\n"
+                f"📊 Processing Results:\n{result}"
+            )
+        self._handle_process('obligation_settlement', 'obligation_settlement', "Success", _msg)
+
     def _process_segregation_report(self):
         """Process segregation report"""
-        try:
-            values = self.pages['segregation_report'].get_values()
-            result = self.processors['segregation_report'].process(**values)
-            
-            # Check if result indicates success or failure
-            if result is None or "error" in str(result).lower() or result == "PERMISSION_ERROR_HANDLED":
-                # Result indicates failure
-                if result == "PERMISSION_ERROR_HANDLED":
-                    # Permission error popup was already shown, do nothing
-                    pass
-                elif result is None:
-                    # Generic failure - show error message
-                    self.message_handler.show_error("Error", "❌ Processing failed. Please check the logs for details.")
-                else:
-                    # Other error - show the error message
-                    self.message_handler.show_error("Error", f"❌ Failed: {result}")
-            else:
-                # Result indicates success
-                msg = f"✅ Segregation Report completed successfully!\n\n" \
-                      f"📅 Selected Date: {values['date']}\n" \
-                      f"🆔 CP PAN: {values['cp_pan']}\n" \
-                      f"📁 Output Folder: {values['output_path']}\n\n" \
-                      f"📊 Processing Results:\n{result}"
-                
-                self.message_handler.show_success("Generate Segregation Report", msg)
-            
-        except Exception as e:
-            # Don't show error if it was a permission error (already shown as popup)
-            if "file permission error" not in str(e).lower():
-                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
+        def _msg(values, result):
+            return (
+                f"✅ Segregation Report completed successfully!\n\n"
+                f"📅 Selected Date: {values['date']}\n"
+                f"🆔 CP PAN: {values['cp_pan']}\n"
+                f"📁 Output Folder: {values['output_path']}\n\n"
+                f"📊 Processing Results:\n{result}"
+            )
+        self._handle_process('segregation_report', 'segregation_report', "Generate Segregation Report", _msg)
 
 
 def main():
