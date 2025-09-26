@@ -839,6 +839,7 @@ class SegregationReportProcessor(BaseProcessor):
             write_file(output_file, data=data, header=segregation_headers)
 
             # Also save the CSV into a ZIP with the same base name
+            csv_zip_path = None
             try:
                 csv_base_name = os.path.splitext(os.path.basename(output_file))[0]
                 csv_zip_path = os.path.join(output_path, f"{csv_base_name}.zip")
@@ -1151,17 +1152,21 @@ class SegregationReportProcessor(BaseProcessor):
                     try:
                         balance = float(row[AD]) - float(cash_with_ncl or 0)
                         record[AV] = balance
+                        record[AW] = row[AG]
+                        record[AX] = row[AH]
+                        record[AT] = cash_with_ncl
                     except (ValueError, TypeError):
                         record[AV] = 0
-                else:
-                    record[AV] = 0
+                        record[AW] = row[AG]
+                        record[AX] = row[AH]
+                        record[AT] = cash_with_ncl
             else:
                 # For other account types, copy data from specific columns
                 if AD in santom_df.columns:
                     record[AV] = row[AD]
                 if AG in santom_df.columns:
                     record[AW] = row[AG]
-                if AX in santom_df.columns:
+                if AH in santom_df.columns:
                     record[AX] = row[AH]
 
             data.append(record)
@@ -1204,6 +1209,14 @@ class SegregationReportProcessor(BaseProcessor):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         insert_report(self.db_path, report_type="SEGREGATION_REPORT", 
                      created_at=timestamp, modified_at=timestamp, report_blob=zip_blob)
+        
+        # Delete only the output CSV file after successful ZIP creation and database save
+        try:
+            if os.path.exists(output_file):
+                os.remove(output_file)
+                print(f"Deleted CSV file: {os.path.basename(output_file)}")
+        except Exception as e:
+            print(f"Warning: Could not delete CSV file {output_file}: {e}")
     
     def _get_master_records(self, av=False, at=False, all_records=False):
         """

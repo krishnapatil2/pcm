@@ -741,7 +741,7 @@ class SegregationReportPage(BasePage):
         DateInputWidget(date_pan_frame, "Date:", self.segregation_date_var, yesterday)
 
         # CP PAN field
-        tk.Label(date_pan_frame, text="Trading member PAN:", font=('Arial', 12, 'bold'),
+        tk.Label(date_pan_frame, text="Clearing\\ Trading member PAN:", font=('Arial', 12, 'bold'),
                 bg=self.bg_color, fg='#2c3e50').pack(side=tk.LEFT)
         self.cp_pan_var = tk.StringVar(value="AACCO4820B")  # Default value
         tk.Entry(date_pan_frame, textvariable=self.cp_pan_var, width=20,
@@ -780,7 +780,7 @@ class SegregationReportPage(BasePage):
         self.collateral_valuation_cds_var = tk.StringVar()
         self.collateral_valuation_fno_var = tk.StringVar()
         self.sec_pledge_var = tk.StringVar()
-        self.cash_with_ncl_var = tk.StringVar()
+        self.cash_with_ncl_var = tk.StringVar(value="1000000")
         self.santom_file_var = tk.StringVar()
         self.extra_records_file = tk.StringVar()
         self.segregation_output_var = tk.StringVar()
@@ -855,8 +855,8 @@ class SegregationReportPage(BasePage):
                 ("Gsec File", "self.sec_pledge_var")
             ]),
             #  Add manual input before Santom file
-            ("Santom File:", [
-                ("SANTOM_FILE", "self.santom_file_var"),
+            ("Sanctum File:", [
+                ("SANCTUM_FILE", "self.santom_file_var"),
                 ("Cash with NCL (PROP)", "self.cash_with_ncl_var")
             ]),
             ("Extra Records:", [
