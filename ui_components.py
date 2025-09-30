@@ -619,8 +619,8 @@ class NMASSAllocationPage(BasePage):
         return {
             'date': self.date_var.get(),
             'sheet': self.sheet_var.get(),
-            'input1': self.input1_var.get(),
-            'input2': self.input2_var.get(),
+            'input1_path': self.input1_var.get(),
+            'input2_path': self.input2_var.get(),
             'output_path': self.output_path.get()
         }
 

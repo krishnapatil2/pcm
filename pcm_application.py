@@ -277,8 +277,8 @@ class PCMApplication:
                 f"✅ NMASS Allocation Report completed successfully!\n\n"
                 f"📅 Selected Date: {values['date']}\n"
                 f"📄 Selected Sheet: {values['sheet']}\n"
-                f"📎 Attachment 1: {os.path.basename(values['input1'])}\n"
-                f"📎 Attachment 2: {os.path.basename(values['input2'])}\n"
+                f"📎 Attachment 1: {os.path.basename(values['input1_path'])}\n"
+                f"📎 Attachment 2: {os.path.basename(values['input2_path'])}\n"
                 f"📁 Output Folder: {values['output_path']}\n\n"
                 f"📊 Processing Results:\n{result}"
             )
@@ -310,15 +310,55 @@ class PCMApplication:
 
 def main():
     """Main entry point"""
-    root = tk.Tk()
-    db_path = setup_database()
+    # Create splash screen FIRST - before any heavy operations
+    splash = tk.Tk()
+    splash.title("PCM")
+    splash.geometry("400x300")
+    splash.resizable(False, False)
     
-    # You can change the home page style here:
-    # 'original' - Grid layout with cards (takes more screen space)
-    # 'compact' - Horizontal buttons (balanced)
-    # 'minimalist' - Simple list (takes minimal screen space)
-    app = PCMApplication(root, db_path=db_path, home_page_style='compact')
-    root.mainloop()
+    # Remove window decorations for cleaner look
+    splash.overrideredirect(True)
+    
+    # Center the splash screen
+    splash.eval('tk::PlaceWindow . center')
+    
+    # Splash screen content
+    splash.configure(bg='#2e7d32')
+    
+    # Logo/Title
+    title_label = tk.Label(splash, text="PCM", font=('Segoe UI', 32, 'bold'), 
+                          bg='#2e7d32', fg='white')
+    title_label.pack(pady=50)
+    
+    subtitle_label = tk.Label(splash, text="Professional Clearing Member", 
+                             font=('Segoe UI', 12), bg='#2e7d32', fg='#c8e6c9')
+    subtitle_label.pack(pady=10)
+    
+    # Loading text
+    loading_label = tk.Label(splash, text="Loading...", font=('Segoe UI', 10), 
+                            bg='#2e7d32', fg='white')
+    loading_label.pack(pady=20)
+    
+    # Force splash screen to show immediately
+    splash.update_idletasks()
+    splash.update()
+    
+    # Initialize main application after splash shows
+    def open_main_app():
+        try:
+            splash.destroy()
+            root = tk.Tk()
+            db_path = setup_database()
+            app = PCMApplication(root, db_path=db_path, home_page_style='compact')
+            root.mainloop()
+        except Exception as e:
+            splash.destroy()
+            import tkinter.messagebox as mb
+            mb.showerror("Error", f"Failed to start application: {e}")
+    
+    # Start heavy operations after splash is visible
+    splash.after(100, open_main_app)
+    splash.mainloop()
 
 
 if __name__ == "__main__":
