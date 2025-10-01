@@ -501,6 +501,7 @@ class ObligationSettlementProcessor(BaseProcessor):
             stamp_duty_dict = build_dict(file_path=stamp_duty_path,
                 key_cols=["BrkrOrCtdnPtcptId","TckrSymb", "FinInstrmId"],
                 value_cols={
+                    "Sell Stamp Duty": "BuyOthrThanDlvryStmpDty",
                     "Buy Stamp Duty": "BuyDlvryStmpDty"
                 },
                 filter_col="RptHdr",

@@ -2,6 +2,7 @@ import math
 import os
 import pandas as pd
 import cons_header
+from openpyxl.styles import Border, Side
 
 def safe_float(val):
     """Convert to float safely, treating blanks/NA as 0.0"""
@@ -49,15 +50,6 @@ def read_file(filepath: str, header: int = 0, custom_header: list = None) -> pd.
     
     return df
 
-# MOMF_PATH = r"D:\Ranjan sir\physical settlement files\MOMF_Obligation_Physical Settlement_28082025.xlsx"
-# OBLIGATION_PATH = r"D:\Ranjan sir\physical settlement files\Obligation_NCL_FO_FOPHY_CM_90123_20250828_F_0000.csv"
-# STAMP_DUTY_PATH = r"D:\Ranjan sir\physical settlement files\StampDuty_NCL_FO_FOPHY_CM_90123_20250828_F_0000.csv"
-# STT_PATH = r"D:\Ranjan sir\physical settlement files\STT_NCL_FO_FOPHY_CM_90123_20250828_F_0000.csv"
-
-# momf_df = read_file(MOMF_PATH)
-# obligation_df = read_file(OBLIGATION_PATH)
-# stamp_duty_df = read_file(STAMP_DUTY_PATH)
-# stt_df = read_file(STT_PATH)
 
 def build_dict(file_path: str, key_cols: list, value_cols: dict, filter_col: str = None, filter_val=None) -> dict:
     """
@@ -82,7 +74,12 @@ def build_dict(file_path: str, key_cols: list, value_cols: dict, filter_col: str
 
     lookup_dict = {}
     for _, row in df.iterrows():
-        key = tuple(str(row[col]).strip() for col in key_cols)
+        # key = tuple(str(row[col]).strip() for col in key_cols)
+        key = tuple(
+                        str(int(row[col])) if col == "BrkrOrCtdnPtcptId" and isinstance(row[col], float) and row[col].is_integer()
+                        else str(row[col]).strip()
+                        for col in key_cols
+                    )        
 
         value_dict = {}
         for out_col, src_col in value_cols.items():
@@ -129,11 +126,14 @@ def segregate_excel_by_column(excel_path: str,
     df[column_name] = df[column_name].fillna("").astype(str).str.strip()
     df[column_name] = df[column_name].replace({"": "Blank"})
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(output_path)
+    if output_dir:  # Only create directory if path has a directory component
+        os.makedirs(output_dir, exist_ok=True)
     
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         for key, subset in df.groupby(column_name):
-            subset = subset.copy()
+            subset = subset.copy()                
             # Update values from each update_dict if key matches
             for i, row in subset.iterrows():
                 val = row["FinInstrmId"]
@@ -156,15 +156,27 @@ def segregate_excel_by_column(excel_path: str,
             # now i want to access here df and access some columns and do some calculations and update those columns
             # Do calculations for each row in the sheet
             for i, row in subset.iterrows():
+                buystamp = row.get("Buy Stamp Duty")
+                sellstamp = row.get("Sell Stamp Duty")
+
+                # Handle missing stamp duties
+                if pd.isna(buystamp) or str(buystamp).strip() == "":
+                    subset.at[i, "Buy Stamp Duty"] = 0
+
+                if pd.isna(sellstamp) or str(sellstamp).strip() == "":
+                    subset.at[i, "Sell Stamp Duty"] = 0
+                
+                buy_stamp   = safe_float(subset.at[i, "Buy Stamp Duty"])
+                sell_stamp  = safe_float(subset.at[i, "Sell Stamp Duty"])
+
                 cmltv_buy   = safe_float(row.get("CmltvBuyAmt"))
                 buy_stt     = safe_float(row.get("Buy STT"))
-                buy_stamp   = safe_float(row.get("Buy Stamp Duty"))
 
                 cmltv_sell  = safe_float(row.get("CmltvSellAmt"))
                 sell_stt    = safe_float(row.get("Sell STT"))
 
                 buy_payable = cmltv_buy + buy_stt + buy_stamp
-                sell_receivable = cmltv_sell - sell_stt
+                sell_receivable = cmltv_sell - sell_stt - sell_stamp
                 net_receivable_payable = sell_receivable - buy_payable
 
                 subset.at[i, "Buy Payable Amount"] = buy_payable
@@ -189,42 +201,41 @@ def segregate_excel_by_column(excel_path: str,
 
             safe_sheet_name = str(key)[:31] or "Blank"  # Excel max 31 chars
             subset.to_excel(writer, sheet_name=safe_sheet_name, index=False)
-    
-    # print(f"✅ Segregated file saved: {output_path}")
-
-# Buy Payable Amount =Z4+AC4+AF4  CmltvBuyAmt+Buy STT+Buy Stamp Duty
-# Sell Receivable Amount = AA13-AD13 CmltvSellAmt-Sell STT
-# Net Receivable \ Payable =AH4-AG4 Sell Receivable Amount-Buy Payable Amount
-
-
-# Build STT dictionary
-# stt_dict = build_dict(
-#     file_path=STT_PATH,
-#     key_cols=["BrkrOrCtdnPtcptId","TckrSymb", "FinInstrmId"],
-#     value_cols={
-#         "Buy STT": "BuyDelvryTtlTaxs",
-#         "Sell STT": "SellDelvryTtlTaxs"
-#     },
-#     filter_col="RptHdr",
-#     filter_val=40
-# )
-
-# stamp_duty_dict = build_dict(file_path=STAMP_DUTY_PATH,
-#     key_cols=["BrkrOrCtdnPtcptId","TckrSymb", "FinInstrmId"],
-#     value_cols={
-#         # "Sell Stamp Duty": "",
-#         "Buy Stamp Duty": "BuyDlvryStmpDty"
-#     },
-#     filter_col="RptHdr",
-#     filter_val=40
-# )
-
-# # Segregate obligation and update Buy/Sell STT from dictionary
-# segregate_excel_by_column(
-#     excel_path=OBLIGATION_PATH,
-#     output_path=r"D:\Ranjan sir\physical settlement files\Output\Segregated_Output.xlsx",
-#     column_name="BrkrOrCtdnPtcptId",
-#     custom_header=cons_header.OBLIGATION_HEADER,
-#     update_dicts=[stt_dict, stamp_duty_dict]
-# )
-
+            
+            # Add borders to all cells in the sheet
+            worksheet = writer.sheets[safe_sheet_name]
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            # Apply borders to all cells with data
+            for row in worksheet.iter_rows():
+                for cell in row:
+                    cell.border = thin_border
+            
+            # Auto-adjust column widths based on content
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                
+                # Set minimum width for EXTRA_COLUMNS and adjust based on content
+                adjusted_width = max(max_length + 2, 12)  # Add padding and minimum width
+                
+                # Special handling for EXTRA_COLUMNS to ensure adequate width
+                if column_letter in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']:
+                    # Check if this column contains EXTRA_COLUMNS data
+                    header_cell = worksheet.cell(row=1, column=column[0].column)
+                    if header_cell.value in cons_header.EXTRA_COLUMNS:
+                        adjusted_width = max(adjusted_width, 18)  # Ensure extra columns have good width
+                
+                worksheet.column_dimensions[column_letter].width = adjusted_width
