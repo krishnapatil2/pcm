@@ -267,20 +267,64 @@ class PCMApplication:
     # Processing handlers
     def _handle_process(self, processor_key, page_key, success_title, build_success_msg):
         """Generic processor execution and messaging handler to avoid duplication."""
+        loading_window = None
         try:
             values = self.pages[page_key].get_values()
-            result = self.processors[processor_key].process(**values)
-            if result is None or "error" in str(result).lower() or result == "PERMISSION_ERROR_HANDLED":
-                if result == "PERMISSION_ERROR_HANDLED":
+            
+            # Show loading dialog
+            loading_window = self.message_handler.show_loading(
+                self.root, 
+                "Processing", 
+                f"Generating {success_title}..."
+            )
+            
+            # Force UI update to show loading immediately
+            self.root.update()
+            
+            # Process in a separate thread to keep UI responsive
+            import threading
+            result_container = {'result': None, 'error': None}
+            
+            def process_in_thread():
+                try:
+                    result_container['result'] = self.processors[processor_key].process(**values)
+                except Exception as e:
+                    result_container['error'] = str(e)
+            
+            # Start processing thread
+            process_thread = threading.Thread(target=process_in_thread, daemon=True)
+            process_thread.start()
+            
+            # Wait for processing to complete while keeping UI responsive
+            while process_thread.is_alive():
+                self.root.update()  # Keep UI responsive
+                import time
+                time.sleep(0.01)  # Small delay to prevent high CPU usage
+            
+            # Hide loading dialog
+            if loading_window:
+                self.message_handler.hide_loading(loading_window)
+                loading_window = None
+            
+            # Check results
+            if result_container['error']:
+                self.message_handler.show_error("Error", f"❌ Failed: {result_container['error']}")
+            elif result_container['result'] is None or "error" in str(result_container['result']).lower() or result_container['result'] == "PERMISSION_ERROR_HANDLED":
+                if result_container['result'] == "PERMISSION_ERROR_HANDLED":
                     return
-                elif result is None:
+                elif result_container['result'] is None:
                     self.message_handler.show_error("Error", "❌ Processing failed. Please check the logs for details.")
                 else:
-                    self.message_handler.show_error("Error", f"❌ Failed: {result}")
+                    self.message_handler.show_error("Error", f"❌ Failed: {result_container['result']}")
             else:
-                msg = build_success_msg(values, result)
+                msg = build_success_msg(values, result_container['result'])
                 self.message_handler.show_success(success_title, msg)
+                
         except Exception as e:
+            # Hide loading dialog on error
+            if loading_window:
+                self.message_handler.hide_loading(loading_window)
+            
             if "file permission error" not in str(e).lower():
                 self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
 

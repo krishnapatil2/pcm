@@ -6,8 +6,95 @@ Common utilities and helper functions
 import os
 import traceback
 import tkinter as tk
-from tkinter import messagebox
+import math
+import threading
+import time
+from tkinter import messagebox, ttk
 
+
+class LoadingSpinner(tk.Toplevel):
+    def __init__(self, parent, text="Loading..."):
+        super().__init__(parent)
+        self.title("Please wait")
+        self.geometry("250x200")
+        self.resizable(False, False)
+        self.configure(bg="white")
+        self.transient(parent)
+        self.grab_set()
+
+        # Center window
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - 125
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - 100
+        self.geometry(f"+{x}+{y}")
+
+        # Main frame
+        main_frame = tk.Frame(self, bg="white")
+        main_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+
+        # Canvas for spinner
+        self.canvas = tk.Canvas(main_frame, width=200, height=100, bg="white", highlightthickness=0)
+        self.canvas.pack(pady=20)
+
+        # Animation variables
+        self.current_dot = 0
+        self.dots = []
+        self.is_running = True
+
+        # Create 8 dots in a circle
+        self.create_dots()
+        
+        # Start animation using after() method - this is the most reliable way
+        self.animate()
+
+    def create_dots(self):
+        """Create 8 dots positioned in a circle"""
+        center_x, center_y = 100, 50
+        radius = 35
+        
+        for i in range(8):
+            angle = (i * 45) * math.pi / 180  # 45 degrees apart
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            
+            # Create dot with light blue color initially
+            dot = self.canvas.create_oval(x-4, y-4, x+4, y+4, fill="#ccccff", outline="")
+            self.dots.append(dot)
+
+    def animate(self):
+        """Animate using after() method - most reliable for Tkinter"""
+        if not self.is_running:
+            return
+            
+        try:
+            # Reset all dots to light blue
+            for dot in self.dots:
+                self.canvas.itemconfig(dot, fill="#ccccff")
+            
+            # Highlight current dot in bright blue
+            if self.dots and self.current_dot < len(self.dots):
+                self.canvas.itemconfig(self.dots[self.current_dot], fill="#0066ff")
+            
+            # Move to next dot
+            self.current_dot = (self.current_dot + 1) % len(self.dots)
+            
+            # Force update to ensure animation is visible
+            self.canvas.update_idletasks()
+            
+            # Schedule next animation frame - this is the key!
+            self.after(80, self.animate)  # Faster for better visibility
+            
+        except Exception as e:
+            # If any error, stop animation
+            self.is_running = False
+
+    def close(self):
+        """Close the spinner"""
+        self.is_running = False
+        try:
+            self.destroy()
+        except:
+            pass
 
 class ErrorLogger:
     """Error logging utility"""
@@ -133,6 +220,17 @@ class MessageHandler:
     def show_warning(title, message):
         """Show warning message"""
         messagebox.showwarning(title, message)
+    
+    @staticmethod
+    def show_loading(parent, title="Processing", message="Please wait..."):
+        """Show loading dialog with custom spinner"""
+        return LoadingSpinner(parent, message)
+    
+    @staticmethod
+    def hide_loading(loading_window):
+        """Hide loading dialog"""
+        if loading_window and loading_window.winfo_exists():
+            loading_window.close()
 
 
 class FileValidator:

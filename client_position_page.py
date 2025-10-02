@@ -406,9 +406,7 @@ class ClientPositionPage:
                 })
             
             self._refresh_tree()
-            messagebox.showinfo("✅ File Created", 
-                f"Created {self.master_json_path} with {len(self.DEFAULT_CP_CODES)} default CP codes.\n\n"
-                f"File Location: D:\\PCM_PROJECT\\{self.master_json_path}")
+            # File created silently without showing message
         
         except Exception as e:
             messagebox.showerror("❌ Error", f"Failed to create default JSON file:\n{str(e)}")
