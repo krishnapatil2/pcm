@@ -29,7 +29,7 @@ class ErrorLogger:
                 f.write(traceback.format_exc())
                 f.write("\n" + "="*80 + "\n\n")
         except Exception as e:
-            print(f"Failed to log error: {e}")
+            pass
 
 
 class MessageHandler:
@@ -232,7 +232,6 @@ class DataProcessor:
             return filtered_df
             
         except Exception as e:
-            print(f"Error filtering by date: {e}")
             return df
 
 

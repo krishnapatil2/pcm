@@ -13,14 +13,18 @@ from datetime import datetime, timedelta
 import traceback
 import glob
 import cons_header
+from client_position_page import load_passwords
 from db_manager import insert_report
 from physical_settlement_files import build_dict, segregate_excel_by_column
-from itertools import groupby
-from operator import itemgetter
+
 import json
 import os
 import tkinter as tk
 from tkinter import messagebox
+
+from openpyxl import Workbook
+import pyzipper
+import py7zr
 
 class BaseProcessor:
     """Base class for all processors"""
@@ -54,8 +58,7 @@ class BaseProcessor:
             root.destroy()
         except Exception:
             # Fallback if tkinter is not available
-            print(f"❌ File Permission Error: Cannot {operation} file {filename}")
-            print("Please close the file and try again.")
+            pass
         
         # Return a special value to indicate permission error was handled
         return "PERMISSION_ERROR_HANDLED"
@@ -90,7 +93,6 @@ class MonthlyFloatProcessor(BaseProcessor):
                         df_list.append(temp_df[cons_header.columns_to_keep])
                     except Exception as e:
                         self.log_error(error_log_path, file, e)
-                        print(f"Error reading {file}: {e}")
 
             if not df_list:
                 raise Exception("No CSV files found or all failed to load.")
@@ -453,7 +455,6 @@ class NMASSAllocationProcessor(BaseProcessor):
             return {"record_count": len(sorted_lines)}
 
         except Exception as e:
-            print(f"Error in process_ledger_files: {e}")
             self.log_error(output_path, "Error in process_ledger_files", e)
             return None
     
@@ -750,7 +751,6 @@ class SegregationReportProcessor(BaseProcessor):
             # av_records = self._get_master_records(av=True) at_records = self._get_master_records(at=True)
             # all_records = self._get_master_records(all_records=True)
             
-            # print("####### av_records -", av_records)
             for data_record in data:
                 try:
                     cp_key = str(data_record.get(D, "")).strip()
@@ -808,7 +808,6 @@ class SegregationReportProcessor(BaseProcessor):
             data = self._segregation_data_filter(data, segregation_headers=segregation_headers[9:], extra_records=extra_records_data)
             
             # Loop through data (list of dictionaries) and apply AT records logic
-            # print(f" Processing data with AT records logic...")
             for i, data_record in enumerate(data):
                 # Loop through AT records to find matches
                 for at_record in at_records:
@@ -825,7 +824,6 @@ class SegregationReportProcessor(BaseProcessor):
                         data_record[AV] = data_record[AD] - at_value
                         data_record[AT] = at_value
 
-                        # print(f"  Applied AT logic to record {i+1}: CP Code={at_cp_code}, Segment={at_segment}, AT Value={at_value}")
                         break  # Stop at first match
             
             if santom_file:
@@ -848,7 +846,7 @@ class SegregationReportProcessor(BaseProcessor):
                     zipf.write(output_file, os.path.basename(output_file))
             except Exception as zip_err:
                 # Non-fatal: proceed even if CSV zip creation fails
-                print(f"Warning: Failed to create CSV ZIP: {zip_err}")
+                pass
 
             # Create ZIP and save to database
             self._create_zip_and_save(
@@ -861,7 +859,6 @@ class SegregationReportProcessor(BaseProcessor):
             return f"Segregation report generated successfully with {len(data)} records."
             
         except Exception as e:
-            print(f"Error in process_segregation_files: {e}")
             self.log_error(output_path, "Error in process_segregation_files", e)
             return None
     
@@ -913,7 +910,6 @@ class SegregationReportProcessor(BaseProcessor):
             header_row = None
             for idx, row in enumerate(rows):
                 if row and row[0].strip().upper() == "GSEC":
-                    print(f"✅ Found 'GSEC' at line {idx}")
                     # Prefer next line if it looks like header
                     header_row = idx + 1
                     break
@@ -1092,7 +1088,6 @@ class SegregationReportProcessor(BaseProcessor):
 
             normalized.append(new_row)
         
-        # print(normalized[:5])
         # Step 2 & 3: Sort only by Segment Indicator A to Z
         seg_sorted = sorted(normalized, key=lambda x: str(x.get(seg_col, "")).strip().upper())
         
@@ -1129,7 +1124,7 @@ class SegregationReportProcessor(BaseProcessor):
         return final_data
 
     def _santom_file_working(self, data, cash_with_ncl, santom_df):
-        from CONSTANT_SEGREGATION import segregation_headers, A, B, C, D, E, F, G, H, I, J, K, L, O, P, AD, AV, AG, AW, AH, AX, BB, BD, BF, AT
+        from CONSTANT_SEGREGATION import segregation_headers, A, B, C, D, E, F, G, H, I, J, K, L, O, P, AD, AV, AG, AW, AH, AX, BB, BD, BF, AT, AZ, BL
 
         for _, row in santom_df.iterrows():
             record = {}
@@ -1171,6 +1166,13 @@ class SegregationReportProcessor(BaseProcessor):
                     record[AX] = row[AH]
 
             data.append(record)
+
+            for row in data:
+                if not row.get(AZ) or pd.isna(row.get(AZ)):  # Checks if AZ is blank or missing
+                    row[AZ] = "NA"
+                if not row.get(BL) or pd.isna(row.get(BL)):  # Checks if BL is blank or missing
+                    row[BL] = "NA"
+
         return data
 
     def _create_zip_and_save(self, cash_collateral_cds, cash_collateral_fno, daily_margin_nsecr, 
@@ -1215,9 +1217,8 @@ class SegregationReportProcessor(BaseProcessor):
         try:
             if os.path.exists(output_file):
                 os.remove(output_file)
-                print(f"Deleted CSV file: {os.path.basename(output_file)}")
         except Exception as e:
-            print(f"Warning: Could not delete CSV file {output_file}: {e}")
+            pass
     
     def _get_master_records(self, av=False, at=False, all_records=False):
         """
@@ -1246,10 +1247,9 @@ class SegregationReportProcessor(BaseProcessor):
                 av_records = all_master_data.get('AV_Records', [])
                 at_records = all_master_data.get('AT_Records', [])
 
-                # print(f"✅ Loaded {len(av_records)} AV records and {len(at_records)} AT records")
 
             except Exception as e:
-                print(f"❌ Error reading master records JSON: {e}")
+                pass
         
         # Return based on flags
         if av:
@@ -1260,3 +1260,208 @@ class SegregationReportProcessor(BaseProcessor):
             return av_records + at_records
         else:
             return av_records, at_records  # Default: return both separately
+
+
+class ClientPositionProcessor(BaseProcessor):
+    """Processor for Client Position Report"""
+    
+    def process(self, client_position_path, output_path, selected_cp_codes=None, cp_codes_config=None):
+        """Process client position file"""
+        try:
+            self.validate_inputs(client_position_path=client_position_path, output_path=output_path,
+                               selected_cp_codes=selected_cp_codes)
+            self.create_output_directory(output_path)
+            
+            # Process the client position file
+            result = self._process_client_position_file(client_position_path, output_path, 
+                                                       selected_cp_codes, cp_codes_config)
+            
+            if result:
+                return f"Client position processed successfully with {result['record_count']} records for {result['cp_count']} CP code(s)."
+            else:
+                raise Exception("Failed to process client position file.")
+                
+        except Exception as e:
+            self.log_error(output_path, "Client Position Processing", e)
+            raise e
+    
+    def create_7z_archive(out_path, base_name, excel_file, password=None):
+        archive_file = os.path.join(out_path, f"{base_name}.7z")
+        
+        with py7zr.SevenZipFile(archive_file, 'w', password=password) as archive:
+            archive.write(excel_file, arcname=os.path.basename(excel_file))
+
+    def validate_inputs(self, client_position_path, output_path, selected_cp_codes=None):
+        """Validate inputs for client position processing"""
+        if not client_position_path.strip():
+            raise ValueError("Please select a client position file.")
+        
+        if not output_path.strip():
+            raise ValueError("Please select an output folder.")
+        
+        if not os.path.exists(client_position_path):
+            raise ValueError(f"Client position file not found:\n{client_position_path}")
+        
+        # Allow processing without selecting specific CP codes since add_total is False by default
+        # Users can process the entire file or select specific CP codes as needed
+    
+    def _read_file(self, file_path, **kwargs):
+        """Read file with appropriate method based on extension"""
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(file_path, **kwargs)
+            elif ext in [".xls", ".xlsx"]:
+                df = pd.read_excel(file_path, **kwargs)
+            else:
+                raise ValueError(f"Unsupported file type: {ext}")
+            
+            # Drop rows where all columns are NaN
+            df = df.dropna(how='all')
+            return df
+        except PermissionError:
+            self.handle_file_permission_error(file_path, "read")
+        except Exception as e:
+            if "Permission denied" in str(e) or "being used by another process" in str(e):
+                self.handle_file_permission_error(file_path, "read")
+            else:
+                raise e
+    
+    def _process_client_position_file(self, file_path, output_path, selected_cp_codes=None, cp_codes_config=None):
+        """Process client position file and generate report"""
+        try:
+            # Read the client position file
+            df = self._read_file(file_path)
+            df.columns = df.columns.str.strip()
+
+            # Check if BrkrOrCtdnPtcptId column exists
+            if "BrkrOrCtdnPtcptId" not in df.columns:
+                raise ValueError("Expected a column named 'BrkrOrCtdnPtcptId' in the CSV/Excel file!")
+            
+            # Filter by selected CP codes if provided
+            if selected_cp_codes and len(selected_cp_codes) > 0:
+                df = df[df['BrkrOrCtdnPtcptId'].astype(str).isin(selected_cp_codes)]
+                if len(df) == 0:
+                    raise ValueError("No records found for the selected CP codes in the file.")
+            
+            today_str = datetime.today().strftime("%d%m%Y")
+            cp_count = 0
+            processed_files = []
+            
+            # Group by BrkrOrCtdnPtcptId (CP Code column) and process each
+            for cp, group in df.groupby("BrkrOrCtdnPtcptId"):
+                cp_count += 1
+                cp_str = str(cp)
+                
+                # Get configuration for this CP code using load_passwords function
+                try:
+                    password_map = load_passwords('master_passwords.json')
+                    password = password_map.get(cp_str, '123')
+                except Exception:
+                    password = '123'
+                
+                # Get other config from cp_codes_config if available, otherwise use defaults
+                config = cp_codes_config.get(cp_str, {}) if cp_codes_config else {}
+                mode = config.get('mode', '7z')
+                add_total = config.get('add_total', False)
+                
+                # Calculate specific totals for this CP code
+                total_prm_amt = group["PrmAmt"].sum() if "PrmAmt" in group.columns else 0
+                total_daly_mtm_val = group["DalyMrkToMktSettlmVal"].sum() if "DalyMrkToMktSettlmVal" in group.columns else 0
+                futures_final_val = group["FutrsFnlSttlmVal"].sum() if "FutrsFnlSttlmVal" in group.columns else 0
+                exercise_assigned_val = group["ExrcAssgndVal"].sum() if "ExrcAssgndVal" in group.columns else 0
+                
+                # Combined total
+                combined_total = total_prm_amt + total_daly_mtm_val + futures_final_val + exercise_assigned_val
+                
+                # Create Excel workbook
+                wb = Workbook()
+                ws = wb.active
+
+                # Write header
+                ws.append(list(group.columns))
+
+                # Write rows
+                for row in group.itertuples(index=False, name=None):
+                    ws.append(list(row))
+
+                # If totals required
+                if add_total:
+                    total_row = [""] * len(group.columns)
+
+                    # Column AN = 40 → "TOTAL"
+                    if len(total_row) >= 40:
+                        total_row[39] = "TOTAL"
+
+                    # Column AO = 41 → combined total (PrmAmt + DalyMrkToMktSettlmVal + FutrsFnlSttlmVal + ExrcAssgndVal)
+                    if len(total_row) >= 41:
+                        total_row[40] = combined_total
+
+                    ws.append(total_row)
+
+                # File naming
+                base_name = f"FO_PS04_{cp}_{today_str}"
+                excel_file = os.path.join(output_path, f"{base_name}.xlsx")
+
+                # Save Excel temp file
+                wb.save(excel_file)
+
+                # ZIP mode
+                if mode.lower() == "zip":
+                    zip_file = os.path.join(output_path, f"{base_name}.zip")
+                    with pyzipper.AESZipFile(zip_file, 'w',
+                                            compression=pyzipper.ZIP_DEFLATED,
+                                            encryption=pyzipper.WZ_AES) as zf:
+                        zf.setpassword(password.encode())
+                        zf.write(excel_file, os.path.basename(excel_file))
+                    processed_files.append(zip_file)
+
+                # 7z mode
+                elif mode.lower() in ["gz", "7z"]:
+                    gz_file = os.path.join(output_path, f"{base_name}.7z")
+                    with py7zr.SevenZipFile(gz_file, 'w', password=password) as archive:
+                        archive.write(excel_file, arcname=os.path.basename(excel_file))
+                    processed_files.append(gz_file)
+
+                else:
+                    raise ValueError(f"Invalid mode '{mode}' for CP Code {cp}. Mode must be 'zip' or '7z'.")
+
+                # Clean up temp Excel file
+                os.remove(excel_file)
+            
+            # Create ZIP with input file and all processed files, then save to database
+            self._create_zip_and_save(file_path, processed_files, output_path)
+            
+            return {"record_count": len(df), "cp_count": cp_count}
+            
+        except Exception as e:
+            self.log_error(output_path, "Error in process_client_position_file", e)
+            return None
+    
+    def _create_zip_and_save(self, input_file, processed_files, output_path):
+        """Create ZIP file with input and all processed output files, then save to database"""
+        # Create ZIP
+        dt = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_filename = f"CLIENT_POSITION_REPORT_{dt}.zip"
+        zip_path = os.path.join(output_path, zip_filename)
+        
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            # Add input file
+            zipf.write(input_file, os.path.basename(input_file))
+            
+            # Add all processed output files (7z/zip files for each CP code)
+            for processed_file in processed_files:
+                if os.path.exists(processed_file):
+                    zipf.write(processed_file, os.path.basename(processed_file))
+        
+        # Insert ZIP into DB (only if db_path is provided)
+        if self.db_path:
+            with open(zip_path, 'rb') as f:
+                zip_blob = f.read()
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            insert_report(self.db_path, report_type="CLIENT_POSITION", 
+                         created_at=timestamp, modified_at=timestamp, report_blob=zip_blob)
+        
+        os.remove(zip_path)

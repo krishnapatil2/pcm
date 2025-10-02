@@ -260,7 +260,6 @@ with open(SEC_PLEDGE, "r", encoding="utf-8", errors="ignore") as f:
     for idx, line in enumerate(f):
         first_col = line.split(",")[0].strip()  # only check first column
         if first_col.upper() == "GSEC":
-            print(f"✅ Found 'GSEC' at line {idx}")
             header_row = idx + 1  # header is next line
             break
 # breakpoint()
@@ -308,7 +307,6 @@ if False:
     header_row = None
     for idx, row in enumerate(rows):
         if row and row[0].strip().upper() == "GSEC":
-            print(f"✅ Found 'GSEC' at line {idx}")
             # Prefer next line if it looks like header
             header_row = idx + 1
             break
@@ -347,11 +345,9 @@ if False:
             "HAIRCUT": haircut,
         }
 
-    print("✅ Lookup ready with", len(_sec_pledge_lookup), "entries")
 
     sec_pledge_lookup = build_cp_lookup(_sec_pledge_lookup)
 
-    print("######## sec pledge lookup :", sec_pledge_lookup)
 
     # Create list of lists
     data = []
@@ -423,8 +419,3 @@ if False:
 
 # # XLS file, header is 1st row
 # df3 = read_file("old_file.xls", header_row=0)
-
-# this is for header
-# print(df1.columns.tolist())
-# # print(df1.info())
-# print(df1.describe())

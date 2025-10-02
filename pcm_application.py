@@ -7,15 +7,17 @@ Clean, modular, and maintainable code structure
 import sys
 import os
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from db_manager import setup_database
 from ui_components import (
     HomePage, CompactHomePage, MinimalistHomePage, NavigationBar, MonthlyFloatReportPage, 
     NMASSAllocationPage, ObligationSettlementPage, SegregationReportPage
 )
+from email_config_page import EmailConfigPage
+from client_position_page import ClientPositionPage
 from report_processors import (
     MonthlyFloatProcessor, NMASSAllocationProcessor, 
-    ObligationSettlementProcessor, SegregationReportProcessor
+    ObligationSettlementProcessor, SegregationReportProcessor, ClientPositionProcessor
 )
 from utils import ErrorLogger, MessageHandler, WindowManager, Constants
 
@@ -65,7 +67,8 @@ class PCMApplication:
             'monthly_float': MonthlyFloatProcessor(self.db_path, self.error_logger.log_error),
             'nmass_allocation': NMASSAllocationProcessor(self.db_path, self.error_logger.log_error),
             'obligation_settlement': ObligationSettlementProcessor(self.db_path, self.error_logger.log_error),
-            'segregation_report': SegregationReportProcessor(self.db_path, self.error_logger.log_error)
+            'segregation_report': SegregationReportProcessor(self.db_path, self.error_logger.log_error),
+            'client_position': ClientPositionProcessor(self.db_path, self.error_logger.log_error)
         }
         
         # Pages dictionary
@@ -92,7 +95,8 @@ class PCMApplication:
         self.nav_bar = NavigationBar(
             self.main_container,
             on_home_click=self._on_home_click,
-            on_processing_select=self._on_processing_select
+            on_processing_select=self._on_processing_select,
+            on_email_config_click=self._on_email_config_click
         )
     
     def _create_pages(self):
@@ -119,6 +123,11 @@ class PCMApplication:
         
         # Processing pages
         self._create_processing_pages()
+        
+        # Email configuration page
+        self._create_email_config_page()
+        
+        # Settings page
     
     def _create_processing_pages(self):
         """Create processing pages with notebook"""
@@ -146,8 +155,15 @@ class PCMApplication:
         self._create_nmass_allocation_page()
         self._create_obligation_settlement_page()
         self._create_segregation_report_page()
+        self._create_client_position_page()
         
         self.pages['processing'] = processing_frame
+    
+    def _create_email_config_page(self):
+        """Create email configuration page"""
+        # Create email config page directly
+        email_config_page = EmailConfigPage(self.content_frame)
+        self.pages['email_config'] = email_config_page
     
     def _create_monthly_float_page(self):
         """Create monthly float report page"""
@@ -185,6 +201,15 @@ class PCMApplication:
         self.notebook.add(page.frame, text="Segregation Report")
         self.pages['segregation_report'] = page
     
+    def _create_client_position_page(self):
+        """Create client position page"""
+        page = ClientPositionPage(
+            self.notebook,
+            on_process_click=self._process_client_position
+        )
+        self.notebook.add(page.frame, text="Client Position Report")
+        self.pages['client_position'] = page
+    
     # Navigation handlers
     def _on_home_click(self):
         """Handle home button click"""
@@ -196,6 +221,11 @@ class PCMApplication:
             self.show_page('processing')
         self.nav_bar.fno_mcx_var.set("Processing")
     
+    def _on_email_config_click(self):
+        """Handle email configuration button click"""
+        self.show_page('email_config')
+        # Don't change the processing dropdown text - email config is separate
+    
     def _on_feature_click(self, feature_name):
         """Handle feature button click"""
         self.show_page('processing')
@@ -206,7 +236,8 @@ class PCMApplication:
             "Monthly Float Report": "monthly_float",
             "NMASS Allocation Report": "nmass_allocation", 
             "Obligation Settlement": "obligation_settlement",
-            "Segregation Report": "segregation_report"
+            "Segregation Report": "segregation_report",
+            "Client Position Report": "client_position"
         }
         
         if feature_name in tab_mapping:
@@ -307,6 +338,29 @@ class PCMApplication:
             )
         self._handle_process('segregation_report', 'segregation_report', "Generate Segregation Report", _msg)
 
+    def _process_client_position(self):
+        """Process client position report"""
+        def _msg(values, result):
+            selected_cp_info = ""
+            if values.get('selected_cp_codes'):
+                cp_count = len(values['selected_cp_codes'])
+                cp_list = ', '.join(values['selected_cp_codes'][:5])  # Show first 5
+                if cp_count > 5:
+                    cp_list += f" ... (+{cp_count - 5} more)"
+                selected_cp_info = f"✓ Selected CP Codes ({cp_count}): {cp_list}\n"
+            else:
+                selected_cp_info = "✓ Processed ALL CP codes from the file\n"
+            
+            return (
+                f"✅ Client Position Report completed successfully!\n\n"
+                f"📄 Input File: {os.path.basename(values['client_position_path'])}\n"
+                f"{selected_cp_info}"
+                f"📁 Output Folder: {values['output_path']}\n\n"
+                f"📊 Processing Results:\n{result}\n\n"
+                f"💡 Tip: Individual encrypted files created for each CP code (no totals by default)"
+            )
+        self._handle_process('client_position', 'client_position', "Process Client Position", _msg)
+
 
 def main():
     """Main entry point"""
@@ -346,13 +400,23 @@ def main():
     # Initialize main application after splash shows
     def open_main_app():
         try:
-            splash.destroy()
+            # Safely destroy splash screen
+            try:
+                splash.destroy()
+            except:
+                pass  # Ignore errors if splash is already destroyed
+            
             root = tk.Tk()
             db_path = setup_database()
             app = PCMApplication(root, db_path=db_path, home_page_style='compact')
             root.mainloop()
         except Exception as e:
-            splash.destroy()
+            # Safely destroy splash screen on error
+            try:
+                splash.destroy()
+            except:
+                pass  # Ignore errors if splash is already destroyed
+            
             import tkinter.messagebox as mb
             mb.showerror("Error", f"Failed to start application: {e}")
     

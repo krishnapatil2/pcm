@@ -89,9 +89,10 @@ class HomePage(BasePage):
             ("🧮", "NMASS Allocation", "Compare client allocation files and generate detailed allocation reports", "NMASS Allocation Report", "#388e3c"),  # Medium green
             ("📑", "Physical Settlement", "Handle obligation, STT & stamp duty processing with automated workflows", "Obligation Settlement", "#4caf50"),  # Light green
             ("📋", "Segregation Report", "Generate comprehensive segregation reports with all required data sources", "Segregation Report", "#66bb6a"),  # Lighter green
+            ("📈", "Client Position Report", "Process client position files and generate detailed position reports", "Client Position Report", "#81c784"),  # Lightest green
         ]
 
-        # Create modern feature cards in 2x2 grid
+        # Create modern feature cards in 3x2 grid
         for i, (icon, title, description, feature_name, color) in enumerate(features):
             row = i // 2
             col = i % 2
@@ -211,6 +212,7 @@ class CompactHomePage(BasePage):
             ("🧮", "NMASS Allocation", "Client allocation reports", "NMASS Allocation Report", "#388e3c"),  # Medium green
             ("📑", "Physical Settlement", "Obligation processing", "Obligation Settlement", "#4caf50"),  # Light green
             ("📋", "Segregation Report", "Comprehensive reports", "Segregation Report", "#66bb6a"),  # Lighter green
+            ("📈", "Client Position Report", "Process client position files and generate detailed position reports", "Client Position Report", "#81c784"),  # Lightest green
         ]
 
         # Create modern horizontal cards
@@ -333,6 +335,7 @@ class MinimalistHomePage(BasePage):
             ("🧮", "NMASS Allocation Report", "NMASS Allocation Report", "#388e3c"),  # Medium green
             ("📑", "Obligation Settlement", "Obligation Settlement", "#4caf50"),  # Light green
             ("📋", "Segregation Report", "Segregation Report", "#66bb6a"),  # Lighter green
+            ("📈", "Client Position Report", "Client Position Report", "#81c784"),  # Lightest green
         ]
 
         # Create modern list layout
@@ -413,10 +416,11 @@ class MinimalistHomePage(BasePage):
 
 class NavigationBar:
     """Modern navigation bar component"""
-    def __init__(self, parent, on_home_click, on_processing_select):
+    def __init__(self, parent, on_home_click, on_processing_select, on_email_config_click=None):
         self.parent = parent
         self.on_home_click = on_home_click
         self.on_processing_select = on_processing_select
+        self.on_email_config_click = on_email_config_click
         self.create_widgets()
     
     def create_widgets(self):
@@ -464,6 +468,16 @@ class NavigationBar:
         fno_mcx_menu.config(font=('Segoe UI', 11, 'bold'), bg="#4caf50", fg='white', 
                            relief=tk.FLAT, padx=18, pady=8, cursor='hand2')
         fno_mcx_menu.pack(side=tk.LEFT, padx=5)
+        
+        # Email Configuration button
+        if self.on_email_config_click:
+            email_btn = tk.Button(nav_buttons_frame, text="📧 Email Config", 
+                                font=('Segoe UI', 11, 'bold'),
+                                bg="#388e3c", fg='white', relief=tk.FLAT, padx=18, pady=8,
+                                command=self.on_email_config_click, cursor='hand2')
+            email_btn.pack(side=tk.LEFT, padx=(8, 0))
+            email_btn.bind("<Enter>", on_enter)
+            email_btn.bind("<Leave>", on_leave)
 
 
 class FileInputWidget:
@@ -931,6 +945,9 @@ class SegregationReportPage(BasePage):
         self.cp_code_entry.grid(row=1, column=1, padx=(0, 20), sticky=tk.W, pady=(5, 0))
         self.cp_code_entry.grid_remove()  # Hide initially
         
+        # Add validation to CP Code entry (AT Records) - only allow alphanumeric characters
+        self.cp_code_entry.bind('<KeyPress>', self._validate_cp_code_input)
+        
         # CP Code (for AV when Account Type = C) - initially hidden
         self.cp_code_label_av = tk.Label(controls_frame, text="CP Code:", font=('Arial', 11, 'bold'),
                                        bg=self.bg_color, fg='#2c3e50')
@@ -940,6 +957,9 @@ class SegregationReportPage(BasePage):
         self.cp_code_entry_av = tk.Entry(controls_frame, textvariable=self.cp_code_var, width=18, font=('Arial', 10))
         self.cp_code_entry_av.grid(row=1, column=3, padx=(0, 20), sticky=tk.W, pady=(5, 0))
         self.cp_code_entry_av.grid_remove()
+        
+        # Add validation to CP Code entry (AV Records) - only allow alphanumeric characters
+        self.cp_code_entry_av.bind('<KeyPress>', self._validate_cp_code_input)
 
         # Segment Dropdown (Row 1)
         tk.Label(controls_frame, text="Segment:", font=('Arial', 11, 'bold'),
@@ -994,6 +1014,11 @@ class SegregationReportPage(BasePage):
         self.av_value_var = tk.StringVar()
         self.av_value_entry = tk.Entry(input_frame, textvariable=self.av_value_var, width=30, font=('Arial', 10))
         self.av_value_entry.pack(side=tk.LEFT, padx=5)
+        
+        # Add validation to only allow decimal and integer values
+        self.av_value_entry.bind('<KeyPress>', self._validate_numeric_input)
+        self.av_value_entry.bind('<KeyRelease>', self._validate_numeric_input)
+        self.av_value_entry.bind('<FocusOut>', self._validate_numeric_input)
         
         # Bind mousewheel to entry field (will be done after form creation)
         
@@ -1081,7 +1106,6 @@ class SegregationReportPage(BasePage):
         
         # Get configuration for current table type
         if table_type not in self.table_configurations:
-            print(f"Warning: Unknown table type '{table_type}'")
             return
         
         config = self.table_configurations[table_type]
@@ -1199,7 +1223,6 @@ class SegregationReportPage(BasePage):
                         )
                     self.records_tree.insert('', 'end', values=values)
             except Exception as e:
-                print(f"Error loading JSON file: {e}")
                 self.master_records_data = []
     
     def _save_records_to_json(self):
@@ -1245,6 +1268,14 @@ class SegregationReportPage(BasePage):
         if not value:
             value_type = "AV Value" if table_type == "AV_Records" else "AT Value"
             messagebox.showwarning("Warning", f"Please enter a {value_type}!")
+            return
+        
+        # Validate that the value is a valid number
+        try:
+            float(value)  # This will raise ValueError if not a valid number
+        except ValueError:
+            value_type = "AV Value" if table_type == "AV_Records" else "AT Value"
+            messagebox.showwarning("Invalid Input", f"{value_type} must be a valid number (integer or decimal)!")
             return
         
         if table_type == "AV_Records":
@@ -1394,10 +1425,17 @@ class SegregationReportPage(BasePage):
         if table_type == "AV_Records":
             account_type = self.account_type_var.get()
             cp_code = self.cp_code_var.get().strip()
-            # Validation
-            if not account_type or not segment or not value or (account_type == 'C' and not cp_code):
-                messagebox.showwarning("Warning", "Please fill all required fields!")
-                return
+        # Validation
+        if not account_type or not segment or not value or (account_type == 'C' and not cp_code):
+            messagebox.showwarning("Warning", "Please fill all required fields!")
+            return
+        
+        # Validate that the value is a valid number
+        try:
+            float(value)  # This will raise ValueError if not a valid number
+        except ValueError:
+            messagebox.showwarning("Invalid Input", "AV Value must be a valid number (integer or decimal)!")
+            return
             
             # Check for duplicate combination (exclude current record being updated)
             key_first = f"{account_type}:{cp_code}" if account_type == 'C' else account_type
@@ -1425,6 +1463,13 @@ class SegregationReportPage(BasePage):
             # Validation
             if not cp_code or not segment or not value:
                 messagebox.showwarning("Warning", "Please fill all fields!")
+                return
+            
+            # Validate that the value is a valid number
+            try:
+                float(value)  # This will raise ValueError if not a valid number
+            except ValueError:
+                messagebox.showwarning("Invalid Input", "AT Value must be a valid number (integer or decimal)!")
                 return
             
             # Check for duplicate combination (exclude current record being updated)
@@ -1523,6 +1568,103 @@ class SegregationReportPage(BasePage):
         self.segment_var.set("FO")  # Reset to default FO
         self.av_value_var.set("")
         self.av_value_entry.focus()
+    
+    def _validate_numeric_input(self, event):
+        """Validate that only decimal and integer values are entered"""
+        widget = event.widget
+        current_value = widget.get()
+        
+        # Allow special keys (backspace, delete, arrow keys, etc.)
+        if event.keysym in ['BackSpace', 'Delete', 'Left', 'Right', 'Home', 'End', 'Tab']:
+            return
+        
+        # Allow Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
+        try:
+            if int(event.state) & 0x4:  # Ctrl key is pressed
+                if event.keysym in ['a', 'c', 'v', 'x']:
+                    return
+        except (ValueError, TypeError):
+            pass  # If state is not a valid integer, continue with normal validation
+        
+        # For KeyPress events, check the character being typed
+        if event.type == '2':  # KeyPress event
+            char = event.char
+            
+            # Allow digits, decimal point, and minus sign
+            if char.isdigit() or char in ['.', '-']:
+                # Additional validation for decimal point
+                if char == '.':
+                    # Only allow one decimal point
+                    if '.' in current_value:
+                        return 'break'  # Prevent the character
+                
+                # Additional validation for minus sign
+                if char == '-':
+                    # Only allow minus at the beginning
+                    if current_value or widget.index(tk.INSERT) != 0:
+                        return 'break'  # Prevent the character
+                
+                return  # Allow the character
+            
+            # Block all other characters (including commas)
+            return 'break'
+        
+        # For KeyRelease events, validate the entire string
+        elif event.type == '3':  # KeyRelease event
+            # Remove any invalid characters
+            cleaned_value = self._clean_numeric_string(current_value)
+            if cleaned_value != current_value:
+                widget.delete(0, tk.END)
+                widget.insert(0, cleaned_value)
+    
+    def _clean_numeric_string(self, value):
+        """Clean string to only contain valid numeric characters"""
+        if not value:
+            return value
+        
+        # Remove commas and any non-numeric characters except decimal point and minus
+        cleaned = ''.join(c for c in value if c.isdigit() or c in ['.', '-'])
+        
+        # Ensure only one decimal point
+        if cleaned.count('.') > 1:
+            # Keep only the first decimal point
+            parts = cleaned.split('.')
+            cleaned = parts[0] + '.' + ''.join(parts[1:])
+        
+        # Ensure minus sign is only at the beginning
+        if '-' in cleaned:
+            if cleaned.count('-') > 1 or cleaned.index('-') != 0:
+                # Remove all minus signs and add one at the beginning if needed
+                cleaned = cleaned.replace('-', '')
+                if value.startswith('-'):
+                    cleaned = '-' + cleaned
+        
+        return cleaned
+    
+    def _validate_cp_code_input(self, event):
+        """Validate that only alphanumeric characters are entered in CP Code fields"""
+        # Allow special keys (backspace, delete, arrow keys, etc.)
+        if event.keysym in ['BackSpace', 'Delete', 'Left', 'Right', 'Home', 'End', 'Tab']:
+            return
+        
+        # Allow Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
+        try:
+            if int(event.state) & 0x4:  # Ctrl key is pressed
+                if event.keysym in ['a', 'c', 'v', 'x']:
+                    return
+        except (ValueError, TypeError):
+            pass  # If state is not a valid integer, continue with normal validation
+        
+        # For KeyPress events, check the character being typed
+        if event.type == '2':  # KeyPress event
+            char = event.char
+            
+            # Allow alphanumeric characters only
+            if char.isalnum():
+                return  # Allow the character
+            
+            # Block all other characters (including commas, spaces, special chars)
+            return 'break'
     
     def _get_master_records_data(self):
         """Get all master records data in JSON format (both AV and AT records)"""
