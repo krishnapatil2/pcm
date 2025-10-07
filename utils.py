@@ -212,6 +212,11 @@ class MessageHandler:
         messagebox.showinfo(title, message)
 
     @staticmethod
+    def show_info(title, message):
+        """Show information message"""
+        messagebox.showinfo(title, message)
+
+    @staticmethod
     def show_error(title, message):
         """Show error message"""
         messagebox.showerror(title, message)

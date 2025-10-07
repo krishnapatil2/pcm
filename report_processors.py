@@ -5,6 +5,7 @@ Separated processing logic for different report types
 
 import csv
 import os
+import re
 import pandas as pd
 import zipfile
 import io
@@ -21,6 +22,8 @@ import json
 import os
 import tkinter as tk
 from tkinter import messagebox
+
+from decimal import Decimal, ROUND_HALF_UP
 
 from openpyxl import Workbook
 import pyzipper
@@ -892,12 +895,15 @@ class SegregationReportProcessor(BaseProcessor):
                 # Add to total
                 _sec_pledge_lookup[cp_code]["post_haircut"] += post_haircut
         
-        # Round final values (Excel-like behavior)
         for cp_code in _sec_pledge_lookup:
-            _sec_pledge_lookup[cp_code]["post_haircut"] = round(
-                _sec_pledge_lookup[cp_code]["post_haircut"], 2
-            )
+            value = _sec_pledge_lookup[cp_code]["post_haircut"]
+            dec_value = Decimal(str(value))  # convert float → Decimal
+            _sec_pledge_lookup[cp_code]["post_haircut"] = dec_value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            # _sec_pledge_lookup[cp_code]["post_haircut"] = round(
+            #     _sec_pledge_lookup[cp_code]["post_haircut"], 2
+            # )
         
+        # breakpoint()
         return _sec_pledge_lookup
 
         # sec plesge file logic is below
@@ -1277,7 +1283,11 @@ class ClientPositionProcessor(BaseProcessor):
                                                        selected_cp_codes, cp_codes_config)
             
             if result:
-                return f"Client position processed successfully with {result['record_count']} records for {result['cp_count']} CP code(s)."
+                # Check if result contains a friendly message (info status)
+                if isinstance(result, dict) and result.get('status') == 'info':
+                    return result['message']
+                else:
+                    return f"Client position processed successfully with {result['record_count']} records for {result['cp_count']} CP code(s)."
             else:
                 raise Exception("Failed to process client position file.")
                 
@@ -1341,11 +1351,31 @@ class ClientPositionProcessor(BaseProcessor):
             
             # Filter by selected CP codes if provided
             if selected_cp_codes and len(selected_cp_codes) > 0:
+                # Get unique CP codes in the file for diagnostic purposes
+                cp_codes_in_file = df['BrkrOrCtdnPtcptId'].astype(str).unique()
+                
                 df = df[df['BrkrOrCtdnPtcptId'].astype(str).isin(selected_cp_codes)]
                 if len(df) == 0:
-                    raise ValueError("No records found for the selected CP codes in the file.")
+                    # Return user-friendly message instead of throwing error
+                    available_codes = list(cp_codes_in_file)[:10]  # Show first 10 available codes
+                    friendly_msg = f"ℹ️ The selected CP code(s) {', '.join(selected_cp_codes)} are not found in the data file.\n\n"
+                    friendly_msg += f"📊 Available CP codes in this file: {', '.join(available_codes)}"
+                    if len(cp_codes_in_file) > 10:
+                        friendly_msg += f" ... (+{len(cp_codes_in_file) - 10} more)"
+                    friendly_msg += f"\n\n💡 Total CP codes in file: {len(cp_codes_in_file)}\n"
+                    friendly_msg += f"💡 Please select CP codes that exist in your data file."
+                    
+                    return {
+                        "record_count": 0, 
+                        "cp_count": 0,
+                        "message": friendly_msg,
+                        "status": "info"
+                    }
             
-            today_str = datetime.today().strftime("%d%m%Y")
+            # today_str = datetime.today().strftime("%d%m%Y")
+            match = re.search(r'\d{8}', file_path)
+            extracted_date = match.group()
+            today_str = extracted_date
             cp_count = 0
             processed_files = []
             
@@ -1379,25 +1409,65 @@ class ClientPositionProcessor(BaseProcessor):
                 wb = Workbook()
                 ws = wb.active
 
-                # Write header
-                ws.append(list(group.columns))
+                # Write header - keep all original columns as they are
+                original_headers = list(group.columns)
+                ws.append(original_headers)
 
-                # Write rows
-                for row in group.itertuples(index=False, name=None):
-                    ws.append(list(row))
+                # Find column positions for all needed columns
+                col_positions = {}
+                for i, col in enumerate(group.columns):
+                    col_positions[col] = i
+                
+                # Convert column index to Excel letter (0->A, 1->B, ..., 37->AL)
+                def col_to_excel(col_idx):
+                    result = ""
+                    while col_idx >= 0:
+                        result = chr(col_idx % 26 + 65) + result
+                        col_idx = col_idx // 26 - 1
+                    return result
+                
+                # Get Excel column letters for the sum formula
+                prm_amt_col = col_to_excel(col_positions.get('PrmAmt', 0)) if 'PrmAmt' in col_positions else None
+                daly_mtm_col = col_to_excel(col_positions.get('DalyMrkToMktSettlmVal', 0)) if 'DalyMrkToMktSettlmVal' in col_positions else None
+                futrs_col = col_to_excel(col_positions.get('FutrsFnlSttlmVal', 0)) if 'FutrsFnlSttlmVal' in col_positions else None
+                exrc_col = col_to_excel(col_positions.get('ExrcAssgndVal', 0)) if 'ExrcAssgndVal' in col_positions else None
+                rmks_col = col_to_excel(col_positions.get('Rmks', 0)) if 'Rmks' in col_positions else None
+
+                # Write rows with formula in existing Rmks column
+                row_num = 2  # Excel rows start from 1, header is 1, data starts from 2
+                for idx, row in group.iterrows():
+                    # Original row data - preserve ALL original columns
+                    row_data = []
+                    for col in group.columns:
+                        # If this is the Rmks column, put the formula instead of the value
+                        if col == 'Rmks' and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
+                            row_data.append(f"={prm_amt_col}{row_num}+{daly_mtm_col}{row_num}+{futrs_col}{row_num}+{exrc_col}{row_num}")
+                        else:
+                            val = row[col]
+                            # Handle NaN and None values
+                            if pd.isna(val):
+                                row_data.append("")
+                            else:
+                                row_data.append(val)
+                    
+                    ws.append(row_data)
+                    row_num += 1
 
                 # If totals required
                 if add_total:
                     total_row = [""] * len(group.columns)
-
-                    # Column AN = 40 → "TOTAL"
-                    if len(total_row) >= 40:
-                        total_row[39] = "TOTAL"
-
-                    # Column AO = 41 → combined total (PrmAmt + DalyMrkToMktSettlmVal + FutrsFnlSttlmVal + ExrcAssgndVal)
-                    if len(total_row) >= 41:
-                        total_row[40] = combined_total
-
+                    
+                    # Add TOTAL formula in Rmks column position
+                    if rmks_col:
+                        rmks_position = col_positions.get('Rmks', 0)
+                        total_end_row = row_num - 1  # Last data row
+                        
+                        # Add "TOTAL" text in the column just before Rmks
+                        if rmks_position > 0:
+                            total_row[rmks_position - 1] = "TOTAL"
+                        
+                        total_row[rmks_position] = f"=SUM({rmks_col}2:{rmks_col}{total_end_row})"
+                    
                     ws.append(total_row)
 
                 # File naming
@@ -1406,6 +1476,8 @@ class ClientPositionProcessor(BaseProcessor):
 
                 # Save Excel temp file
                 wb.save(excel_file)
+
+                # self.protect_existing_excel(excel_file, password)
 
                 # ZIP mode
                 if mode.lower() == "zip":
@@ -1465,3 +1537,47 @@ class ClientPositionProcessor(BaseProcessor):
                          created_at=timestamp, modified_at=timestamp, report_blob=zip_blob)
         
         os.remove(zip_path)
+
+    # def protect_existing_excel(self, file_path: str, password: str):
+    #     import os
+    #     import win32com.client as win32
+    #     from win32com.client import constants
+    #     import shutil
+    #     import tempfile
+
+    #     import os
+    #     import win32com.client as win32
+    #     from win32com.client import constants
+
+    #     if not os.path.exists(file_path):
+    #         raise FileNotFoundError(f"File not found: {file_path}")
+
+    #     temp_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False).name
+
+    #     excel = win32.gencache.EnsureDispatch('Excel.Application')
+    #     excel.DisplayAlerts = False
+    #     excel.ScreenUpdating = False
+    #     excel.EnableEvents = False
+    #     try:
+    #         try:
+    #             excel.Calculation = constants.xlCalculationManual
+    #         except Exception:
+    #             pass
+
+    #         wb = excel.Workbooks.Open(os.path.abspath(file_path), ReadOnly=False)
+
+    #         # SaveAs to temporary file with password
+    #         wb.SaveAs(temp_file, FileFormat=51, Password=password)
+    #         wb.Close(SaveChanges=False)
+    #     finally:
+    #         try:
+    #             excel.Calculation = constants.xlCalculationAutomatic
+    #         except Exception:
+    #             pass
+    #         excel.DisplayAlerts = True
+    #         excel.ScreenUpdating = True
+    #         excel.EnableEvents = True
+    #         excel.Quit()
+
+    #     # Replace original file with protected version
+    #     shutil.move(temp_file, file_path)

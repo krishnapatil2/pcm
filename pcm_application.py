@@ -317,8 +317,12 @@ class PCMApplication:
                 else:
                     self.message_handler.show_error("Error", f"❌ Failed: {result_container['result']}")
             else:
-                msg = build_success_msg(values, result_container['result'])
-                self.message_handler.show_success(success_title, msg)
+                # Check if result is an info message (starts with ℹ️ emoji)
+                if isinstance(result_container['result'], str) and result_container['result'].startswith('ℹ️'):
+                    self.message_handler.show_info("Information", result_container['result'])
+                else:
+                    msg = build_success_msg(values, result_container['result'])
+                    self.message_handler.show_success(success_title, msg)
                 
         except Exception as e:
             # Hide loading dialog on error
