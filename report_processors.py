@@ -1391,10 +1391,27 @@ class ClientPositionProcessor(BaseProcessor):
                 except Exception:
                     password = '123'
                 
-                # Get other config from cp_codes_config if available, otherwise use defaults
-                config = cp_codes_config.get(cp_str, {}) if cp_codes_config else {}
-                mode = config.get('mode', '7z')
-                add_total = config.get('add_total', False)
+                # Load mode and add_total from master_passwords.json FIRST
+                mode = '7z'
+                add_total = False
+                try:
+                    with open('master_passwords.json', 'r') as f:
+                        all_configs = json.load(f)
+                    
+                    # Find config for this CP code
+                    for item in all_configs:
+                        if str(item.get('cp_code', '')) == cp_str:
+                            mode = item.get('mode', '7z')
+                            add_total = item.get('add_total', False)
+                            break
+                except Exception:
+                    pass
+                
+                # Override with cp_codes_config if provided (from UI selection)
+                if cp_codes_config and cp_str in cp_codes_config:
+                    ui_config = cp_codes_config[cp_str]
+                    mode = ui_config.get('mode', mode)
+                    add_total = ui_config.get('add_total', add_total)
                 
                 # Calculate specific totals for this CP code
                 total_prm_amt = group["PrmAmt"].sum() if "PrmAmt" in group.columns else 0
@@ -1440,7 +1457,7 @@ class ClientPositionProcessor(BaseProcessor):
                     row_data = []
                     for col in group.columns:
                         # If this is the Rmks column, put the formula instead of the value
-                        if col == 'Rmks' and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
+                        if add_total and col == 'Rmks' and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
                             row_data.append(f"={prm_amt_col}{row_num}+{daly_mtm_col}{row_num}+{futrs_col}{row_num}+{exrc_col}{row_num}")
                         else:
                             val = row[col]
