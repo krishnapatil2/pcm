@@ -194,6 +194,16 @@ class MessageHandler:
                     "- All input files and the generated report are packaged into a ZIP file for easy storage and backup.",
                     "- The report follows the standard segregation format with FO and CD segments."
                 ]
+            },
+            "File Comparison": {
+                "title": "File Comparison & Reconciliation:\n",
+                "description": [
+                    "- Attach the two files that need to be reconciled.",
+                    "- Select whether to compare Attachment 1 against Attachment 2, Attachment 2 against Attachment 1, or both directions.",
+                    "- The comparison exports directional sheets with records that exist in one attachment but not the other.",
+                    "- A summary tab highlights the number of unmatched records per direction for quick review.",
+                    "- Use the output workbook as an audit trail before finalising downstream reports."
+                ]
             }
         }
 
@@ -302,6 +312,10 @@ class WindowManager:
         
         root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         root.minsize(1000, 700)  # Set minimum size
+        try:
+            root.state('zoomed')
+        except Exception:
+            pass
         
         # Set icon
         if icon_path:

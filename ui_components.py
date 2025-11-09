@@ -15,12 +15,93 @@ class BasePage:
         self.parent = parent
         self.bg_color = bg_color
         self.frame = tk.Frame(parent, bg=bg_color)
+        self._scroll_widgets = []
     
     def pack(self, **kwargs):
         self.frame.pack(**kwargs)
     
     def pack_forget(self):
         self.frame.pack_forget()
+
+    def create_scrollable_container(self):
+        """Create a vertical scrollable container inside the page."""
+        outer = tk.Frame(self.frame, bg=self.bg_color)
+        outer.pack(expand=True, fill=tk.BOTH)
+
+        canvas = tk.Canvas(outer, bg=self.bg_color, highlightthickness=0)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        content = tk.Frame(canvas, bg=self.bg_color)
+        content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        content.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        def _resize_canvas(event):
+            canvas_width = event.width
+            canvas.itemconfig(content_window, width=canvas_width)
+
+        canvas.bind("<Configure>", _resize_canvas)
+
+        self._attach_mousewheel(canvas, content)
+        self._scroll_widgets.append((canvas, content))
+        return content
+
+    def _attach_mousewheel(self, canvas, content):
+        """Attach mousewheel scrolling to the canvas."""
+        def _on_mousewheel(event):
+            if not canvas.bbox("all"):
+                return
+            delta = 0
+            if event.num == 4:
+                delta = -1
+            elif event.num == 5:
+                delta = 1
+            else:
+                if event.delta > 0:
+                    delta = -1
+                elif event.delta < 0:
+                    delta = 1
+            if delta:
+                canvas.yview_scroll(delta, "units")
+
+        def _bind(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", _on_mousewheel)
+            canvas.bind_all("<Button-5>", _on_mousewheel)
+
+        def _unbind(event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        content.bind("<Enter>", _bind)
+        content.bind("<Leave>", _unbind)
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Button-4>", _on_mousewheel)
+        canvas.bind("<Button-5>", _on_mousewheel)
+        content.bind("<MouseWheel>", _on_mousewheel)
+        content.bind("<Button-4>", _on_mousewheel)
+        content.bind("<Button-5>", _on_mousewheel)
+
+        self.frame.after(200, lambda: self._bind_scroll_to_children(content, _on_mousewheel))
+
+    def _bind_scroll_to_children(self, parent, handler):
+        """Recursively bind scroll handler to child widgets."""
+        try:
+            parent.bind("<MouseWheel>", handler)
+            parent.bind("<Button-4>", handler)
+            parent.bind("<Button-5>", handler)
+        except Exception:
+            pass
+        for child in parent.winfo_children():
+            self._bind_scroll_to_children(child, handler)
 
 
 class HomePage(BasePage):
@@ -33,7 +114,8 @@ class HomePage(BasePage):
     
     def create_widgets(self):
         # Main container with gradient-like background
-        main_container = tk.Frame(self.frame, bg=self.bg_color)
+        scroll_content = self.create_scrollable_container()
+        main_container = tk.Frame(scroll_content, bg=self.bg_color)
         main_container.pack(expand=True, fill=tk.BOTH, padx=30, pady=25)
         
         # Header section with modern styling
@@ -90,6 +172,7 @@ class HomePage(BasePage):
             ("📑", "Physical Settlement", "Handle obligation, STT & stamp duty processing with automated workflows", "Obligation Settlement", "#4caf50"),  # Light green
             ("📋", "Segregation Report", "Generate comprehensive segregation reports with all required data sources", "Segregation Report", "#66bb6a"),  # Lighter green
             ("📈", "Client Position Report", "Process client position files and generate detailed position reports", "Client Position Report", "#81c784"),  # Lightest green
+            ("🧾", "File Comparison", "Reconcile two attachments with directional checks and detailed difference exports", "File Comparison", "#5fb87b"),
         ]
 
         # Create modern feature cards in 3x2 grid
@@ -185,7 +268,8 @@ class CompactHomePage(BasePage):
     
     def create_widgets(self):
         # Main container with modern styling
-        main_container = tk.Frame(self.frame, bg=self.bg_color)
+        scroll_content = self.create_scrollable_container()
+        main_container = tk.Frame(scroll_content, bg=self.bg_color)
         main_container.pack(expand=True, fill=tk.BOTH, padx=25, pady=20)
         
         # Header with modern design
@@ -213,6 +297,7 @@ class CompactHomePage(BasePage):
             ("📑", "Physical Settlement", "Obligation processing", "Obligation Settlement", "#4caf50"),  # Light green
             ("📋", "Segregation Report", "Comprehensive reports", "Segregation Report", "#66bb6a"),  # Lighter green
             ("📈", "Client Position Report", "Process client position files and generate detailed position reports", "Client Position Report", "#81c784"),  # Lightest green
+            ("🧾", "File Comparison", "Reconcile two attachments with directional checks", "File Comparison", "#5fb87b"),
         ]
 
         # Create modern horizontal cards
@@ -308,7 +393,8 @@ class MinimalistHomePage(BasePage):
     
     def create_widgets(self):
         # Main container with modern styling
-        main_container = tk.Frame(self.frame, bg=self.bg_color)
+        scroll_content = self.create_scrollable_container()
+        main_container = tk.Frame(scroll_content, bg=self.bg_color)
         main_container.pack(expand=True, fill=tk.BOTH, padx=20, pady=15)
         
         # Header - compact but modern
@@ -336,6 +422,7 @@ class MinimalistHomePage(BasePage):
             ("📑", "Obligation Settlement", "Obligation Settlement", "#4caf50"),  # Light green
             ("📋", "Segregation Report", "Segregation Report", "#66bb6a"),  # Lighter green
             ("📈", "Client Position Report", "Client Position Report", "#81c784"),  # Lightest green
+            ("🧾", "File Comparison", "File Comparison", "#5fb87b"),
         ]
 
         # Create modern list layout
@@ -639,6 +726,150 @@ class NMASSAllocationPage(BasePage):
         }
 
 
+class FileComparisonPage(BasePage):
+    """File Comparison & Reconciliation page"""
+    def __init__(self, parent, on_compare_click):
+        super().__init__(parent)
+        self.on_compare_click = on_compare_click
+        self.attachment1_var = tk.StringVar()
+        self.attachment2_var = tk.StringVar()
+        self.output_path_var = tk.StringVar()
+        self.compare_a_to_b = tk.BooleanVar(value=True)
+        self.compare_b_to_a = tk.BooleanVar(value=False)
+        self.create_widgets()
+    
+    def create_widgets(self):
+        scroll_content = self.create_scrollable_container()
+        container = tk.Frame(scroll_content, bg=self.bg_color)
+        container.pack(expand=True, fill=tk.BOTH, padx=20, pady=15)
+
+        header_label = tk.Label(
+            container,
+            text="File Comparison & Reconciliation",
+            font=('Arial', 16, 'bold'),
+            bg=self.bg_color,
+            fg='#2c3e50'
+        )
+        header_label.pack(pady=(10, 4))
+        
+        subtitle_label = tk.Label(
+            container,
+            text="Attach two files, choose the comparison direction, and export the variances for review.",
+            font=('Arial', 10),
+            bg=self.bg_color,
+            fg='#566573',
+            wraplength=720,
+            justify=tk.CENTER
+        )
+        subtitle_label.pack(pady=(0, 12))
+        
+        FileInputWidget(container, "Attachment 1:", self.attachment1_var)
+        FileInputWidget(container, "Attachment 2:", self.attachment2_var)
+        FileInputWidget(container, "Output Folder:", self.output_path_var, is_folder=True)
+
+        mode_frame = tk.Frame(container, bg=self.bg_color)
+        mode_frame.pack(pady=(12, 20), fill=tk.X)
+        
+        tk.Label(
+            mode_frame,
+            text="Comparison Direction (select at least one):",
+            font=('Arial', 12, 'bold'),
+            bg=self.bg_color,
+            fg='#2c3e50'
+        ).pack(anchor=tk.W, pady=(0, 8))
+        
+        check_font = ('Arial', 10)
+        tk.Checkbutton(
+            mode_frame,
+            text="Downward (Attachment 1 → Attachment 2) – records only in Attachment 1",
+            variable=self.compare_a_to_b,
+            onvalue=True,
+            offvalue=False,
+            bg=self.bg_color,
+            fg='#2c3e50',
+            font=check_font,
+            activebackground=self.bg_color,
+            anchor='w',
+            justify=tk.LEFT,
+            highlightthickness=0,
+            selectcolor=self.bg_color
+        ).pack(anchor=tk.W, pady=(0, 4))
+        
+        tk.Checkbutton(
+            mode_frame,
+            text="Upward (Attachment 2 → Attachment 1) – records only in Attachment 2",
+            variable=self.compare_b_to_a,
+            onvalue=True,
+            offvalue=False,
+            bg=self.bg_color,
+            fg='#2c3e50',
+            font=check_font,
+            activebackground=self.bg_color,
+            anchor='w',
+            justify=tk.LEFT,
+            highlightthickness=0,
+            selectcolor=self.bg_color
+        ).pack(anchor=tk.W, pady=(0, 8))
+        
+        tk.Label(
+            mode_frame,
+            text="Tip: Select both options to generate directional sheets for a full reconciliation audit trail.",
+            font=('Arial', 9, 'italic'),
+            bg=self.bg_color,
+            fg='#566573',
+            wraplength=720,
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+        primary_action_frame = tk.Frame(container, bg=self.bg_color)
+        primary_action_frame.pack(pady=(10, 30), fill=tk.X)
+
+        run_btn_top = tk.Button(
+            primary_action_frame,
+            text="🔁 Run Reconciliation",
+            command=self.on_compare_click,
+            bg='#27ae60',
+            fg='white',
+            font=('Arial', 13, 'bold'),
+            relief=tk.FLAT,
+            padx=32,
+            pady=8,
+            cursor='hand2'
+        )
+        run_btn_top.pack(side=tk.LEFT, padx=(0, 10))
+
+        reset_btn_top = tk.Button(
+            primary_action_frame,
+            text="♻️ Reset Form",
+            command=self._reset_fields,
+            bg='#f39c12',
+            fg='white',
+            font=('Arial', 11, 'bold'),
+            relief=tk.FLAT,
+            padx=26,
+            pady=6,
+            cursor='hand2'
+        )
+        reset_btn_top.pack(side=tk.LEFT)
+    
+    def get_values(self):
+        return {
+            'attachment1_path': self.attachment1_var.get().strip(),
+            'attachment2_path': self.attachment2_var.get().strip(),
+            'output_path': self.output_path_var.get().strip(),
+            'compare_a_to_b': bool(self.compare_a_to_b.get()),
+            'compare_b_to_a': bool(self.compare_b_to_a.get())
+        }
+
+    def _reset_fields(self):
+        """Clear all fields to default state."""
+        self.attachment1_var.set("")
+        self.attachment2_var.set("")
+        self.output_path_var.set("")
+        self.compare_a_to_b.set(True)
+        self.compare_b_to_a.set(False)
+
+
 class ObligationSettlementPage(BasePage):
     """Obligation Settlement page"""
     def __init__(self, parent, on_generate_click):
@@ -869,7 +1100,7 @@ class SegregationReportPage(BasePage):
                 ("Gsec File", "self.sec_pledge_var")
             ]),
             #  Add manual input before Santom file
-            ("Sanctum File:", [
+            ("Sanctum File (Optional):", [
                 ("SANCTUM_FILE", "self.santom_file_var"),
                 ("Cash with NCL (PROP)", "self.cash_with_ncl_var")
             ]),
@@ -1419,82 +1650,87 @@ class SegregationReportPage(BasePage):
             return
         
         table_type = self.table_type_var.get()
-        segment = self.segment_var.get()
-        value = self.av_value_var.get().strip()
+        segment = (self.segment_var.get() or "").strip()
+        value = (self.av_value_var.get() or "").strip()
+        
+        selected_item_ids = self.records_tree.selection()
+        if not selected_item_ids:
+            messagebox.showwarning("Warning", "Please select a record to update!")
+            return
+        
+        try:
+            float(value)
+        except ValueError:
+            value_label = "AV Value" if table_type == "AV_Records" else "AT Value"
+            messagebox.showwarning("Invalid Input", f"{value_label} must be a valid number (integer or decimal)!")
+            return
         
         if table_type == "AV_Records":
-            account_type = self.account_type_var.get()
-            cp_code = self.cp_code_var.get().strip()
-        # Validation
-        if not account_type or not segment or not value or (account_type == 'C' and not cp_code):
-            messagebox.showwarning("Warning", "Please fill all required fields!")
-            return
-        
-        # Validate that the value is a valid number
-        try:
-            float(value)  # This will raise ValueError if not a valid number
-        except ValueError:
-            messagebox.showwarning("Invalid Input", "AV Value must be a valid number (integer or decimal)!")
-            return
+            account_type = (self.account_type_var.get() or "").strip()
+            cp_code = (self.cp_code_var.get() or "").strip()
             
-            # Check for duplicate combination (exclude current record being updated)
-            key_first = f"{account_type}:{cp_code}" if account_type == 'C' else account_type
-            current_record_id = self.master_records_data[self.selected_record_id].get('id') if 0 <= self.selected_record_id < len(self.master_records_data) else None
-            if self._check_duplicate_record(key_first, segment, table_type, exclude_id=current_record_id):
-                messagebox.showwarning("Duplicate Record", 
-                                     f"A record with Account Type '{account_type}'{f' and CP Code {cp_code}' if account_type=='C' else ''} and Segment '{segment}' already exists!")
+            if not account_type or not segment or not value or (account_type == 'C' and not cp_code):
+                messagebox.showwarning("Warning", "Please fill all required fields!")
                 return
             
-            # Update in data
+            key_first = f"{account_type}:{cp_code}" if account_type == 'C' else account_type
+            current_record_id = None
+            if 0 <= self.selected_record_id < len(self.master_records_data):
+                current_record_id = self.master_records_data[self.selected_record_id].get('id')
+            
+            if self._check_duplicate_record(key_first, segment, table_type, exclude_id=current_record_id):
+                messagebox.showwarning(
+                    "Duplicate Record",
+                    f"A record with Account Type '{account_type}'"
+                    f"{f' and CP Code {cp_code}' if account_type == 'C' else ''} "
+                    f"and Segment '{segment}' already exists!"
+                )
+                return
+            
             if 0 <= self.selected_record_id < len(self.master_records_data):
                 self.master_records_data[self.selected_record_id].update({
-                    G : account_type,
-                    D : cp_code if account_type == 'C' else '',
-                    H : segment,
+                    G: account_type,
+                    D: cp_code if account_type == 'C' else '',
+                    H: segment,
                     'av_value': value
                 })
             
-            # Update in table
-            selected_item = self.records_tree.selection()[0]
+            selected_item = selected_item_ids[0]
             self.records_tree.item(selected_item, values=(account_type, cp_code, segment, value))
+        
+        elif table_type == "AT_Records":
+            cp_code = (self.cp_code_var.get() or "").strip()
             
-        else:  # AT_Records
-            cp_code = self.cp_code_var.get().strip()
-            # Validation
             if not cp_code or not segment or not value:
                 messagebox.showwarning("Warning", "Please fill all fields!")
                 return
             
-            # Validate that the value is a valid number
-            try:
-                float(value)  # This will raise ValueError if not a valid number
-            except ValueError:
-                messagebox.showwarning("Invalid Input", "AT Value must be a valid number (integer or decimal)!")
-                return
+            current_record_id = None
+            if 0 <= self.selected_record_id < len(self.master_records_data):
+                current_record_id = self.master_records_data[self.selected_record_id].get('id')
             
-            # Check for duplicate combination (exclude current record being updated)
-            current_record_id = self.master_records_data[self.selected_record_id].get('id') if 0 <= self.selected_record_id < len(self.master_records_data) else None
             if self._check_duplicate_record(cp_code, segment, table_type, exclude_id=current_record_id):
-                messagebox.showwarning("Duplicate Record", 
-                                     f"A record with CP Code '{cp_code}' and Segment '{segment}' already exists!")
+                messagebox.showwarning(
+                    "Duplicate Record",
+                    f"A record with CP Code '{cp_code}' and Segment '{segment}' already exists!"
+                )
                 return
             
-            # Update in data
             if 0 <= self.selected_record_id < len(self.master_records_data):
                 self.master_records_data[self.selected_record_id].update({
-                    D : cp_code,
-                    H : segment,
+                    D: cp_code,
+                    H: segment,
                     'at_value': value
                 })
             
-            # Update in table
-            selected_item = self.records_tree.selection()[0]
+            selected_item = selected_item_ids[0]
             self.records_tree.item(selected_item, values=(cp_code, segment, value))
         
-        # Save to JSON file
-        self._save_records_to_json()
+        else:
+            messagebox.showwarning("Warning", f"Unsupported table type '{table_type}'.")
+            return
         
-        # Reset form
+        self._save_records_to_json()
         self._cancel_update()
         messagebox.showinfo("Success", "Record updated successfully!")
     
@@ -1693,19 +1929,19 @@ class SegregationReportPage(BasePage):
     
     def get_values(self):
         return {
-            'date': self.segregation_date_var.get(),
-            'cp_pan': self.cp_pan_var.get(),
-            'cash_collateral_cds': self.cash_collateral_cds_var.get(),
-            'cash_collateral_fno': self.cash_collateral_fno_var.get(),
-            'daily_margin_nsecr': self.daily_margin_nsecr_var.get(),
-            'daily_margin_nsefno': self.daily_margin_nsefno_var.get(),
-            'x_cp_master': self.x_cp_master_var.get(),
-            'f_cp_master': self.f_cp_master_var.get(),
-            'collateral_valuation_cds': self.collateral_valuation_cds_var.get(),
-            'collateral_valuation_fno': self.collateral_valuation_fno_var.get(),
-            'sec_pledge': self.sec_pledge_var.get(),
-            'cash_with_ncl': self.cash_with_ncl_var.get(),   #  Added here
-            'santom_file': self.santom_file_var.get(),
-            'extra_records': self.extra_records_file.get(),
-            'output_path': self.segregation_output_var.get()
+            'date': self.segregation_date_var.get().strip(),
+            'cp_pan': self.cp_pan_var.get().strip(),
+            'cash_collateral_cds': self.cash_collateral_cds_var.get().strip(),
+            'cash_collateral_fno': self.cash_collateral_fno_var.get().strip(),
+            'daily_margin_nsecr': self.daily_margin_nsecr_var.get().strip(),
+            'daily_margin_nsefno': self.daily_margin_nsefno_var.get().strip(),
+            'x_cp_master': self.x_cp_master_var.get().strip(),
+            'f_cp_master': self.f_cp_master_var.get().strip(),
+            'collateral_valuation_cds': self.collateral_valuation_cds_var.get().strip(),
+            'collateral_valuation_fno': self.collateral_valuation_fno_var.get().strip(),
+            'sec_pledge': self.sec_pledge_var.get().strip(),
+            'cash_with_ncl': self.cash_with_ncl_var.get().strip(),   #  Added here
+            'santom_file': self.santom_file_var.get().strip(),
+            'extra_records': self.extra_records_file.get().strip(),
+            'output_path': self.segregation_output_var.get().strip()
         }

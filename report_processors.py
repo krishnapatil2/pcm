@@ -6,6 +6,7 @@ Separated processing logic for different report types
 import csv
 import os
 import re
+import math
 import pandas as pd
 import zipfile
 import io
@@ -1271,7 +1272,7 @@ class SegregationReportProcessor(BaseProcessor):
 class ClientPositionProcessor(BaseProcessor):
     """Processor for Client Position Report"""
     
-    def process(self, client_position_path, output_path, selected_cp_codes=None, cp_codes_config=None):
+    def process(self, client_position_path, output_path, selected_cp_codes=None, cp_codes_config=None, cash_collateral_path=None):
         """Process client position file"""
         try:
             self.validate_inputs(client_position_path=client_position_path, output_path=output_path,
@@ -1279,8 +1280,13 @@ class ClientPositionProcessor(BaseProcessor):
             self.create_output_directory(output_path)
             
             # Process the client position file
-            result = self._process_client_position_file(client_position_path, output_path, 
-                                                       selected_cp_codes, cp_codes_config)
+            result = self._process_client_position_file(
+                client_position_path,
+                output_path,
+                selected_cp_codes,
+                cp_codes_config,
+                cash_collateral_path=cash_collateral_path
+            )
             
             if result:
                 # Check if result contains a friendly message (info status)
@@ -1338,12 +1344,45 @@ class ClientPositionProcessor(BaseProcessor):
             else:
                 raise e
     
-    def _process_client_position_file(self, file_path, output_path, selected_cp_codes=None, cp_codes_config=None):
+    def _process_client_position_file(self, file_path, output_path, selected_cp_codes=None, cp_codes_config=None, cash_collateral_path=None):
         """Process client position file and generate report"""
         try:
             # Read the client position file
             df = self._read_file(file_path)
             df.columns = df.columns.str.strip()
+
+            try:
+                summary_output_path = os.path.join(output_path, "PS04_Summary.xlsx")
+                summary_file = self._create_collateral_summary_excel(file_path, summary_output_path)
+                # Log success to a file for debugging
+                try:
+                    log_file = os.path.join(output_path, "PS04_Summary_log.txt")
+                    with open(log_file, "w", encoding="utf-8") as f:
+                        f.write(f"PS04 summary Excel generated successfully!\n")
+                        f.write(f"Output file: {summary_file}\n")
+                except Exception as log_err:
+                    pass  # Don't fail if logging fails
+            except Exception as summary_error:
+                # Log detailed error
+                error_msg = f"PS04 summary Excel generation failed!\n"
+                error_msg += f"Error: {str(summary_error)}\n"
+                error_msg += f"Traceback:\n{traceback.format_exc()}\n"
+                self.log_error(output_path, "PS04 summary Excel generation", summary_error)
+                # Also write to a separate log file for easier debugging
+                try:
+                    error_log_file = os.path.join(output_path, "PS04_summary_error.txt")
+                    with open(error_log_file, "w", encoding="utf-8") as f:
+                        f.write(error_msg)
+                except:
+                    pass
+
+            new_passwords = 0
+            collateral_path_clean = (cash_collateral_path or "").strip()
+            if collateral_path_clean:
+                try:
+                    new_passwords = self._update_passwords_from_collateral(collateral_path_clean)
+                except Exception as sync_error:
+                    self.log_error(output_path, "Cash collateral password sync", sync_error)
 
             # Check if BrkrOrCtdnPtcptId column exists
             if "BrkrOrCtdnPtcptId" not in df.columns:
@@ -1372,10 +1411,14 @@ class ClientPositionProcessor(BaseProcessor):
                         "status": "info"
                     }
             
-            # today_str = datetime.today().strftime("%d%m%Y")
+            # Extract date from filename, or use today's date as fallback
             match = re.search(r'\d{8}', file_path)
-            extracted_date = match.group()
-            today_str = extracted_date
+            if match:
+                extracted_date = match.group()
+                today_str = extracted_date
+            else:
+                # Fallback to today's date if no 8-digit date found in filename
+                today_str = datetime.today().strftime("%d%m%Y")
             cp_count = 0
             processed_files = []
             
@@ -1522,7 +1565,15 @@ class ClientPositionProcessor(BaseProcessor):
             # Create ZIP with input file and all processed files, then save to database
             self._create_zip_and_save(file_path, processed_files, output_path)
             
-            return {"record_count": len(df), "cp_count": cp_count}
+            result = {"record_count": len(df), "cp_count": cp_count, "new_passwords": new_passwords}
+            
+            # Add collateral summary info to result
+            if collateral_path_clean:
+                collateral_summary_path = os.path.join(output_path, "PS04_Summary.xlsx")
+                if os.path.exists(collateral_summary_path):
+                    result["collateral_summary"] = collateral_summary_path
+            
+            return result
             
         except Exception as e:
             self.log_error(output_path, "Error in process_client_position_file", e)
@@ -1554,6 +1605,206 @@ class ClientPositionProcessor(BaseProcessor):
                          created_at=timestamp, modified_at=timestamp, report_blob=zip_blob)
         
         os.remove(zip_path)
+
+    def _update_passwords_from_collateral(self, file_path):
+        """Update master_passwords.json with CP/PAN pairs from collateral file."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Cash collateral file not found: {file_path}")
+
+        df = self._read_file(file_path, header=9)
+
+        if df.empty:
+            return 0
+
+        df = df.iloc[:, 1:] if df.shape[1] > 1 else df
+
+        df.columns = [str(col).strip() for col in df.columns]
+
+        required_columns = {"ClientCode", "PANNo"}
+        missing = required_columns - set(df.columns)
+        if missing:
+            raise ValueError(f"Cash collateral file missing required columns: {', '.join(sorted(missing))}")
+
+        df = df.dropna(subset=["ClientCode", "PANNo"], how="any")
+
+        master_path = "master_passwords.json"
+        if os.path.exists(master_path):
+            with open(master_path, 'r') as fh:
+                try:
+                    master_data = json.load(fh)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid JSON in {master_path}: {exc}")
+        else:
+            master_data = []
+
+        if isinstance(master_data, dict):
+            master_data = [
+                {
+                    'cp_code': self._normalize_identifier(cp_code),
+                    'password': self._normalize_identifier((config or {}).get('password')),
+                    'mode': (config or {}).get('mode', '7z'),
+                    'add_total': (config or {}).get('add_total', False)
+                }
+                for cp_code, config in master_data.items()
+            ]
+        elif not isinstance(master_data, list):
+            master_data = []
+
+        existing_codes = {
+            self._normalize_identifier(entry.get('cp_code')): entry
+            for entry in master_data
+            if self._normalize_identifier(entry.get('cp_code'))
+        }
+
+        new_entries = 0
+        for _, row in df.iterrows():
+            cp_code = self._normalize_identifier(row.get("ClientCode"))
+            password = self._normalize_identifier(row.get("PANNo"))
+
+            if not cp_code or not password:
+                continue
+
+            if cp_code in existing_codes:
+                continue
+
+            entry = {
+                'cp_code': cp_code,
+                'password': password,
+                'mode': '7z',
+                'add_total': False
+            }
+
+            master_data.append(entry)
+            existing_codes[cp_code] = entry
+            new_entries += 1
+
+        if new_entries:
+            with open(master_path, 'w') as fh:
+                json.dump(master_data, fh, indent=2)
+
+        return new_entries
+
+    def _create_collateral_summary_excel(self, file_path, output_path):
+        """Create aggregated summary Excel from collateral file grouped by BrkrOrCtdnPtcptId."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Collateral file not found: {file_path}")
+
+        # Read the collateral file (same way as _update_passwords_from_collateral)
+        df = self._read_file(file_path)
+
+        if df.empty:
+            raise ValueError("Collateral file is empty")
+
+        # Clean column names
+        df.columns = [str(col).strip() for col in df.columns]
+
+        # Required columns
+        required_columns = ["BrkrOrCtdnPtcptId"]
+        sum_columns = [
+            "PrmAmt",
+            "DalyMrkToMktSettlmVal",
+            "FutrsFnlSttlmVal",
+            "ExrcAssgndVal"
+        ]
+
+        # Check if BrkrOrCtdnPtcptId exists
+        if "BrkrOrCtdnPtcptId" not in df.columns:
+            raise ValueError(f"Required column 'BrkrOrCtdnPtcptId' not found in file. Available columns: {', '.join(df.columns.tolist())}")
+
+        # Check which sum columns exist
+        available_sum_columns = [col for col in sum_columns if col in df.columns]
+        if not available_sum_columns:
+            raise ValueError(f"None of the required sum columns found. Expected: {', '.join(sum_columns)}. Available: {', '.join(df.columns.tolist())}")
+
+        # Remove rows where BrkrOrCtdnPtcptId is missing
+        df = df.dropna(subset=["BrkrOrCtdnPtcptId"])
+        df["BrkrOrCtdnPtcptId"] = df["BrkrOrCtdnPtcptId"].astype(str).str.strip()
+        df = df[df["BrkrOrCtdnPtcptId"] != ""]
+
+        if df.empty:
+            raise ValueError("No valid BrkrOrCtdnPtcptId values found in file")
+
+        # Convert sum columns to numeric, replacing non-numeric values with 0
+        for col in available_sum_columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+        # Group by BrkrOrCtdnPtcptId and sum the specified columns
+        aggregation_dict = {col: 'sum' for col in available_sum_columns}
+        grouped_df = df.groupby("BrkrOrCtdnPtcptId", as_index=False).agg(aggregation_dict)
+
+        # Create output directory if it doesn't exist
+        output_dir = os.path.dirname(output_path) if os.path.dirname(output_path) else "."
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Create Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Summary"
+
+        # Header including RowTotal
+        header = ["BrkrOrCtdnPtcptId"] + available_sum_columns + ["Sum Of Total"]
+        ws.append(header)
+
+        # Write aggregated data rows with row totals
+        for excel_row_idx, (_, row) in enumerate(grouped_df.iterrows(), start=2):
+            row_data = [row["BrkrOrCtdnPtcptId"]]
+
+            # Add numeric values
+            for col in available_sum_columns:
+                row_data.append(row[col])
+
+            # Create row-total formula
+            first_col_idx = 1  # numeric columns start at index 1 (Excel col B)
+            last_col_idx = len(available_sum_columns)
+            first_letter = self._col_to_excel(first_col_idx)
+            last_letter = self._col_to_excel(last_col_idx)
+
+            row_total_formula = f"=SUM({first_letter}{excel_row_idx}:{last_letter}{excel_row_idx})"
+            row_data.append(row_total_formula)
+
+            ws.append(row_data)
+
+        # Add TOTAL row (vertical totals)
+        total_row = ["TOTAL"]
+        last_data_row = len(grouped_df) + 1  # last numeric row number
+
+        # Column totals
+        for col in available_sum_columns:
+            col_idx = header.index(col)
+            col_letter = self._col_to_excel(col_idx)
+            total_row.append(f"=SUM({col_letter}2:{col_letter}{last_data_row})")
+
+        # Add total for RowTotal column
+        row_total_idx = header.index("Sum Of Total")
+        row_total_letter = self._col_to_excel(row_total_idx)
+        total_row.append(f"=SUM({row_total_letter}2:{row_total_letter}{last_data_row})")
+
+        ws.append(total_row)
+
+        # Save Excel file
+        wb.save(output_path)
+        return output_path
+
+
+    @staticmethod
+    def _col_to_excel(col_idx):
+        """Convert column index to Excel letter (0->A, 1->B, ..., 25->Z, 26->AA, etc.)"""
+        result = ""
+        col_num = col_idx + 1  # Convert 0-indexed to 1-indexed (A=1, B=2, ...)
+        while col_num > 0:
+            col_num -= 1
+            result = chr(col_num % 26 + 65) + result
+            col_num //= 26
+        return result
+
+    @staticmethod
+    def _normalize_identifier(value):
+        if value is None:
+            return ""
+        text = str(value).strip()
+        if not text or text.lower() == 'nan':
+            return ""
+        return text
 
     # def protect_existing_excel(self, file_path: str, password: str):
     #     import os
@@ -1598,3 +1849,255 @@ class ClientPositionProcessor(BaseProcessor):
 
     #     # Replace original file with protected version
     #     shutil.move(temp_file, file_path)
+
+
+class FileComparisonProcessor(BaseProcessor):
+    """Processor for File Comparison & Reconciliation."""
+
+    def process(self, attachment1_path, attachment2_path, output_path, compare_a_to_b, compare_b_to_a):
+        """Compare two attachments and export directional differences."""
+        try:
+            self.validate_inputs(
+                attachment1_path=attachment1_path,
+                attachment2_path=attachment2_path,
+                output_path=output_path,
+                compare_a_to_b=compare_a_to_b,
+                compare_b_to_a=compare_b_to_a
+            )
+            self.create_output_directory(output_path)
+
+            df1 = self._load_file(attachment1_path)
+            if isinstance(df1, str) and df1 == "PERMISSION_ERROR_HANDLED":
+                return df1
+
+            df2 = self._load_file(attachment2_path)
+            if isinstance(df2, str) and df2 == "PERMISSION_ERROR_HANDLED":
+                return df2
+
+            self._validate_headers(df1, df2)
+
+            # Helper function for value comparison
+            def values_equal(a, b, *, rel_tol=1e-9, abs_tol=1e-9):
+                """
+                Compares two values of any type safely.
+                Handles: string, int, float, Decimal, None, NaN, numeric-like strings, etc.
+                """
+                # 1. Both missing
+                if pd.isna(a) and pd.isna(b):
+                    return True
+                # 2. One missing, one not
+                if pd.isna(a) ^ pd.isna(b):
+                    return False
+                # 3. Try numeric comparison
+                # Handle: 10, 10.0, "10", "10.000", Decimal("10")
+                try:
+                    a_num = float(a)
+                    b_num = float(b)
+                    if math.isclose(a_num, b_num, rel_tol=rel_tol, abs_tol=abs_tol):
+                        return True
+                except Exception:
+                    pass  # at least one value is not numeric-like
+                # 4. String comparison (trim whitespace)
+                try:
+                    a_str = str(a).strip()
+                    b_str = str(b).strip()
+                    if a_str == b_str:
+                        return True
+                except Exception:
+                    pass
+                # 5. Fallback (final exact check)
+                return a == b
+
+            # Helper functions for comparison
+            def compare_a_to_b(source_df, target_df, key_cols):
+                """Find records in source_df that are not in target_df."""
+                # Build list of target keys (as tuples for element-by-element comparison)
+                target_keys = []
+                for _, row in target_df.iterrows():
+                    target_keys.append(tuple(row[col] for col in key_cols))
+                
+                missing = []
+                for _, src_row in source_df.iterrows():
+                    key = tuple(src_row[col] for col in key_cols)
+                    # Compare element by element using values_equal
+                    match_found = False
+                    for tgt_key in target_keys:
+                        all_match = True
+                        for i, (a, b) in enumerate(zip(key, tgt_key)):
+                            if not values_equal(a, b):
+                                all_match = False
+                                break
+                        if all_match:
+                            match_found = True
+                            break
+                    if not match_found:
+                        missing.append(src_row)
+                return missing
+
+            def compare_b_to_a(source_df, target_df, key_cols):
+                """Find records in source_df that are not in target_df."""
+                # Build list of target keys (as tuples for element-by-element comparison)
+                target_keys = []
+                for _, row in target_df.iterrows():
+                    target_keys.append(tuple(row[col] for col in key_cols))
+                
+                missing = []
+                for _, src_row in source_df.iterrows():
+                    key = tuple(src_row[col] for col in key_cols)
+                    # Compare element by element using values_equal
+                    match_found = False
+                    for tgt_key in target_keys:
+                        all_match = True
+                        for i, (a, b) in enumerate(zip(key, tgt_key)):
+                            if not values_equal(a, b):
+                                all_match = False
+                                break
+                        if all_match:
+                            match_found = True
+                            break
+                    if not match_found:
+                        missing.append(src_row)
+                return missing
+
+            # Define key columns for comparison (adjust based on your actual columns)
+            key_cols = ["CP Code", "Segment Indicator"]
+            
+            # Check if key columns exist in both dataframes
+            missing_cols_1 = [col for col in key_cols if col not in df1.columns]
+            missing_cols_2 = [col for col in key_cols if col not in df2.columns]
+            
+            if missing_cols_1 or missing_cols_2:
+                raise ValueError(
+                    f"Key columns missing in files:\n"
+                    f"Attachment 1 missing: {missing_cols_1}\n"
+                    f"Attachment 2 missing: {missing_cols_2}\n"
+                    f"Available columns in Attachment 1: {list(df1.columns)}\n"
+                    f"Available columns in Attachment 2: {list(df2.columns)}"
+                )
+
+            # Perform comparisons based on selected directions
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_filename = f"file_comparison_{timestamp}.xlsx"
+            output_file = os.path.join(output_path, output_filename)
+
+            results = {
+                'only_in_attachment_1': 0,
+                'only_in_attachment_2': 0,
+                'output_file': output_file,
+                'common_column_count': len([col for col in df1.columns if col in df2.columns])
+            }
+
+            try:
+                with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+                    summary_rows = []
+
+                    if compare_a_to_b:
+                        missing_records_a_to_b = compare_a_to_b(df1, df2, key_cols)
+                        results['only_in_attachment_1'] = len(missing_records_a_to_b)
+                        
+                        if missing_records_a_to_b:
+                            missing_df_a_to_b = pd.DataFrame(missing_records_a_to_b)
+                            missing_df_a_to_b.to_excel(writer, sheet_name="Downward (A→B)", index=False)
+                        else:
+                            # Create empty dataframe with same columns
+                            empty_df = pd.DataFrame(columns=df1.columns)
+                            empty_df.to_excel(writer, sheet_name="Downward (A→B)", index=False)
+                        
+                        summary_rows.append({
+                            "Direction": "Downward (Attachment 1 → Attachment 2)",
+                            "Unmatched Records": len(missing_records_a_to_b)
+                        })
+
+                    if compare_b_to_a:
+                        missing_records_b_to_a = compare_b_to_a(df2, df1, key_cols)
+                        results['only_in_attachment_2'] = len(missing_records_b_to_a)
+                        
+                        if missing_records_b_to_a:
+                            missing_df_b_to_a = pd.DataFrame(missing_records_b_to_a)
+                            missing_df_b_to_a.to_excel(writer, sheet_name="Upward (B→A)", index=False)
+                        else:
+                            # Create empty dataframe with same columns
+                            empty_df = pd.DataFrame(columns=df2.columns)
+                            empty_df.to_excel(writer, sheet_name="Upward (B→A)", index=False)
+                        
+                        summary_rows.append({
+                            "Direction": "Upward (Attachment 2 → Attachment 1)",
+                            "Unmatched Records": len(missing_records_b_to_a)
+                        })
+
+                    if not summary_rows:
+                        summary_rows.append({
+                            "Direction": "No direction selected",
+                            "Unmatched Records": 0
+                        })
+
+                    summary_df = pd.DataFrame(summary_rows)
+                    summary_df.to_excel(writer, sheet_name="Summary", index=False)
+            except PermissionError:
+                handled = self.handle_file_permission_error(output_file, "write")
+                if handled == "PERMISSION_ERROR_HANDLED":
+                    return handled
+                raise
+
+            return results
+        except Exception as e:
+            if output_path:
+                self.log_error(output_path, "File Comparison Processing", e)
+            raise e
+
+    def validate_inputs(self, attachment1_path, attachment2_path, output_path, compare_a_to_b, compare_b_to_a):
+        """Validate inputs for file comparison."""
+        if not attachment1_path.strip() or not attachment2_path.strip():
+            raise ValueError("Please select both attachment files before comparing.")
+
+        if not os.path.exists(attachment1_path):
+            raise ValueError(f"Attachment 1 file not found:\n{attachment1_path}")
+
+        if not os.path.exists(attachment2_path):
+            raise ValueError(f"Attachment 2 file not found:\n{attachment2_path}")
+
+        if not output_path.strip():
+            raise ValueError("Please select an output folder for the comparison workbook.")
+
+        if not (compare_a_to_b or compare_b_to_a):
+            raise ValueError("Select at least one comparison direction before running the reconciliation.")
+
+    def _load_file(self, file_path):
+        """Load CSV or Excel file safely."""
+        ext = os.path.splitext(file_path)[1].lower()
+
+        try:
+            if ext == ".csv":
+                df = pd.read_csv(file_path)
+            elif ext in [".xls", ".xlsx"]:
+                df = pd.read_excel(file_path)
+            else:
+                raise ValueError(f"Unsupported file type for comparison: {ext}")
+
+            df = df.dropna(how='all')
+            df.columns = df.columns.astype(str).str.strip()
+            return df
+        except PermissionError:
+            return self.handle_file_permission_error(file_path, "read")
+        except Exception as e:
+            if "Permission denied" in str(e) or "being used by another process" in str(e):
+                return self.handle_file_permission_error(file_path, "read")
+            raise e
+
+    def _validate_headers(self, df1, df2):
+        """Validate that both dataframes have matching headers."""
+        headers1 = set(col.strip() for col in df1.columns)
+        headers2 = set(col.strip() for col in df2.columns)
+        
+        if headers1 != headers2:
+            missing_in_2 = headers1 - headers2
+            missing_in_1 = headers2 - headers1
+            
+            error_msg = "Header mismatch between attachments:\n"
+            if missing_in_2:
+                error_msg += f"Columns in Attachment 1 but not in Attachment 2: {sorted(missing_in_2)}\n"
+            if missing_in_1:
+                error_msg += f"Columns in Attachment 2 but not in Attachment 1: {sorted(missing_in_1)}\n"
+            error_msg += "\nPlease ensure both files have the same column headers."
+            
+            raise ValueError(error_msg)

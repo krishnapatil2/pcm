@@ -127,6 +127,7 @@ class ClientPositionPage:
         self.on_process_click = on_process_click
         self.cp_codes_data = []  # Store CP codes with checkbox states and passwords
         self.master_json_path = "master_passwords.json"
+        self.cash_collateral_path = tk.StringVar()
         self.create_widgets()
         self.load_cp_codes_from_json()  # Load on init
     
@@ -173,7 +174,20 @@ class ClientPositionPage:
                  bg='#3498db', fg='white', font=('Arial', 9, 'bold'), 
                  relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=(5, 0))
         
-        # Output Folder
+        # Optional Cash Collateral file
+        tk.Label(file_section, text="Cash Collateral File (Optional):", font=('Arial', 10, 'bold'),
+                bg=self.bg_color, fg='#2c3e50').pack(anchor='w', pady=(5, 2))
+
+        file_frame3 = tk.Frame(file_section, bg=self.bg_color)
+        file_frame3.pack(fill=tk.X, pady=(0, 10))
+
+        tk.Entry(file_frame3, textvariable=self.cash_collateral_path,
+                font=('Arial', 9), width=25).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(file_frame3, text="📂", command=lambda: self._browse_file(self.cash_collateral_path),
+                 bg='#3498db', fg='white', font=('Arial', 9, 'bold'),
+                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=(5, 0))
+
+        # Output Folder (placed last)
         tk.Label(file_section, text="Output Folder:", font=('Arial', 10, 'bold'), 
                 bg=self.bg_color, fg='#2c3e50').pack(anchor='w', pady=(5, 2))
         
@@ -313,6 +327,10 @@ class ClientPositionPage:
         
         tk.Button(button_frame, text="✗ Deselect All", command=self._deselect_all,
                  bg='#95a5a6', fg='white', font=('Arial', 10), 
+                 relief=tk.FLAT, padx=15, pady=6).pack(side=tk.LEFT, padx=(0, 5))
+
+        tk.Button(button_frame, text="⚙ Update Mode/Total", command=self.bulk_update_all,
+                 bg='#d35400', fg='white', font=('Arial', 10, 'bold'),
                  relief=tk.FLAT, padx=15, pady=6).pack(side=tk.LEFT, padx=(0, 5))
         
         tk.Button(button_frame, text="🔄 Reset to Default", command=self.reset_to_default,
@@ -554,7 +572,7 @@ class ClientPositionPage:
                 'selected': False
             })
             
-            self._refresh_tree()
+            self._refresh_tree_and_focus(cp_code, reset_filter=True, deselect_all=True)
             dialog.destroy()
             
             # Auto-save to JSON file
@@ -567,7 +585,11 @@ class ClientPositionPage:
                  bg='#27ae60', fg='white', font=('Arial', 10, 'bold'), 
                  relief=tk.FLAT, padx=25, pady=8).pack(side=tk.LEFT, padx=5)
         
-        tk.Button(btn_frame, text="✖ Cancel", command=dialog.destroy,
+        def cancel_add():
+            self._refresh_tree_and_focus(reset_filter=True, deselect_all=True)
+            dialog.destroy()
+        
+        tk.Button(btn_frame, text="✖ Cancel", command=cancel_add,
                  bg='#95a5a6', fg='white', font=('Arial', 10), 
                  relief=tk.FLAT, padx=25, pady=8).pack(side=tk.LEFT, padx=5)
     
@@ -647,7 +669,7 @@ class ClientPositionPage:
             cp_data['mode'] = mode_var.get()
             cp_data['add_total'] = add_total_var.get()
             
-            self._refresh_tree()
+            self._refresh_tree_and_focus(cp_code, reset_filter=True, deselect_all=True)
             dialog.destroy()
             
             # Auto-save to JSON file
@@ -660,7 +682,11 @@ class ClientPositionPage:
                  bg='#f39c12', fg='white', font=('Arial', 10, 'bold'), 
                  relief=tk.FLAT, padx=25, pady=8).pack(side=tk.LEFT, padx=5)
         
-        tk.Button(btn_frame, text="✖ Cancel", command=dialog.destroy,
+        def cancel_edit():
+            self._refresh_tree_and_focus(reset_filter=True, deselect_all=True)
+            dialog.destroy()
+        
+        tk.Button(btn_frame, text="✖ Cancel", command=cancel_edit,
                  bg='#95a5a6', fg='white', font=('Arial', 10), 
                  relief=tk.FLAT, padx=25, pady=8).pack(side=tk.LEFT, padx=5)
     
@@ -688,8 +714,11 @@ class ClientPositionPage:
             messagebox.showinfo("✅ Success", 
                 f"Deleted CP Code: {cp_code}\n\nAutomatically saved to {self.master_json_path}")
     
-    def _refresh_tree(self, filter_text=''):
+    def _refresh_tree(self, filter_text=None):
         """Refresh the tree view with current data"""
+        if filter_text is None:
+            filter_text = self.search_var.get()
+        
         # Clear existing items
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -724,6 +753,38 @@ class ClientPositionPage:
         total_count = len(self.cp_codes_data)
         self.selection_label.config(text=f"Selected: {selected_count} / {total_count}")
     
+    def _refresh_tree_and_focus(self, cp_code=None, reset_filter=False, deselect_all=False):
+        """Refresh tree with options to reset filter, focus a CP code, and clear selections."""
+
+        if deselect_all:
+            for data in self.cp_codes_data:
+                data['selected'] = False
+
+        if reset_filter:
+            self.search_var.set('')
+            # Ensure table refreshes immediately even if trace callbacks are delayed
+            self._refresh_tree('')
+        else:
+            self._refresh_tree(self.search_var.get())
+            if cp_code is not None and not deselect_all:
+                self._focus_tree_item(cp_code)
+            return
+
+        # When reset_filter=True, the trace callback already refreshed the tree.
+        if cp_code is not None and not deselect_all:
+            self._focus_tree_item(cp_code)
+    
+    def _focus_tree_item(self, cp_code):
+        """Ensure the specified CP code row remains focused after refresh"""
+        cp_code_str = str(cp_code) if cp_code is not None else ''
+        for item in self.tree.get_children():
+            values = self.tree.item(item, 'values')
+            if values and str(values[1]) == cp_code_str:
+                self.tree.selection_set(item)
+                self.tree.focus(item)
+                self.tree.see(item)
+                break
+    
     def _on_tree_click(self, event):
         """Handle tree click to toggle checkbox"""
         # Don't handle single clicks if this might be part of a double-click
@@ -745,24 +806,128 @@ class ClientPositionPage:
                 
                 # Toggle if clicking on select column or CP code column
                 if column in ('#1', '#2'):  # Select column or CP Code column
-                    # First, clear all other selections
-                    for data in self.cp_codes_data:
-                        data['selected'] = False
-                    
-                    # Then, toggle the clicked item
                     cp_code_str = str(cp_code) if cp_code is not None else ''
                     for data in self.cp_codes_data:
                         if str(data['cp_code']) == cp_code_str:
-                            data['selected'] = True
+                            data['selected'] = not data['selected']
                             break
                     
                     self._refresh_tree(self.search_var.get())
+                    self._focus_tree_item(cp_code_str)
     
     def _on_search(self, *args):
         """Handle search text change"""
         search_text = self.search_var.get()
         self._refresh_tree(search_text)
     
+    def bulk_update_all(self):
+        """Bulk update mode and total settings for every CP code"""
+        if not self.cp_codes_data:
+            messagebox.showinfo("ℹ️ No Records", "There are no CP codes available to update.")
+            return
+        
+        dialog = tk.Toplevel(self.frame)
+        dialog.title("⚙ Update Mode / Total For All")
+        dialog.geometry("360x220")
+        dialog.resizable(False, False)
+        dialog.configure(bg='#fdf7f0')
+        
+        dialog.transient(self.frame)
+        dialog.grab_set()
+        
+        # Mode selection controls
+        apply_mode_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(dialog, text="Update Mode", variable=apply_mode_var,
+                       bg='#fdf7f0', font=('Arial', 10, 'bold')).grid(row=0, column=0, columnspan=2,
+                                                                       sticky='w', padx=20, pady=(20, 6))
+        
+        tk.Label(dialog, text="Mode:", font=('Arial', 10),
+                 bg='#fdf7f0').grid(row=1, column=0, sticky='w', padx=20, pady=4)
+        
+        first_mode = (self.cp_codes_data[0].get('mode') or '7z').lower()
+        mode_var = tk.StringVar(value='zip' if first_mode == 'zip' else '7z')
+        
+        mode_frame = tk.Frame(dialog, bg='#fdf7f0')
+        mode_frame.grid(row=1, column=1, sticky='w', padx=20, pady=4)
+        mode_zip_btn = tk.Radiobutton(mode_frame, text="ZIP", variable=mode_var, value="zip",
+                                      bg='#fdf7f0', font=('Arial', 10))
+        mode_zip_btn.pack(side=tk.LEFT, padx=5)
+        mode_7z_btn = tk.Radiobutton(mode_frame, text="7z", variable=mode_var, value="7z",
+                                     bg='#fdf7f0', font=('Arial', 10))
+        mode_7z_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Total row controls
+        apply_total_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(dialog, text="Update Total Setting", variable=apply_total_var,
+                       bg='#fdf7f0', font=('Arial', 10, 'bold')).grid(row=2, column=0, columnspan=2,
+                                                                       sticky='w', padx=20, pady=(12, 6))
+        
+        tk.Label(dialog, text="Add Total Row:", font=('Arial', 10),
+                 bg='#fdf7f0').grid(row=3, column=0, sticky='w', padx=20, pady=4)
+        
+        add_total_var = tk.BooleanVar(value=bool(self.cp_codes_data[0].get('add_total')))
+        total_checkbox = tk.Checkbutton(dialog, text="Yes, include total row", variable=add_total_var,
+                                        bg='#fdf7f0', font=('Arial', 10))
+        total_checkbox.grid(row=3, column=1, sticky='w', padx=20, pady=4)
+        
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg='#fdf7f0')
+        btn_frame.grid(row=4, column=0, columnspan=2, pady=25)
+        
+        def toggle_mode_state():
+            state = tk.NORMAL if apply_mode_var.get() else tk.DISABLED
+            mode_zip_btn.configure(state=state)
+            mode_7z_btn.configure(state=state)
+        
+        def toggle_total_state():
+            state = tk.NORMAL if apply_total_var.get() else tk.DISABLED
+            total_checkbox.configure(state=state)
+        
+        def apply_changes():
+            if not apply_mode_var.get() and not apply_total_var.get():
+                messagebox.showwarning("⚠️ No Update Selected", "Enable Mode and/or Total before applying changes.")
+                return
+            
+            summary_parts = []
+            
+            if apply_mode_var.get():
+                new_mode = mode_var.get()
+                for data in self.cp_codes_data:
+                    data['mode'] = new_mode
+                summary_parts.append(f"mode '{new_mode.upper()}'")
+            
+            if apply_total_var.get():
+                new_total = add_total_var.get()
+                for data in self.cp_codes_data:
+                    data['add_total'] = new_total
+                summary_parts.append(f"total row {'ON' if new_total else 'OFF'}")
+            
+            self._refresh_tree(self.search_var.get())
+            dialog.destroy()
+            
+            # Auto-save to JSON file
+            self._auto_save_to_json()
+            
+            messagebox.showinfo("✅ Update Complete",
+                                f"Updated all {len(self.cp_codes_data)} CP code(s) → {', '.join(summary_parts)}.")
+        
+        # Initialize states
+        toggle_mode_state()
+        toggle_total_state()
+        apply_mode_var.trace_add('write', lambda *_: toggle_mode_state())
+        apply_total_var.trace_add('write', lambda *_: toggle_total_state())
+        
+        def cancel_changes():
+            dialog.destroy()
+        
+        tk.Button(btn_frame, text="💾 Apply", command=apply_changes,
+                 bg='#27ae60', fg='white', font=('Arial', 10, 'bold'),
+                 relief=tk.FLAT, padx=25, pady=8).pack(side=tk.LEFT, padx=8)
+        
+        tk.Button(btn_frame, text="✖ Cancel", command=cancel_changes,
+                 bg='#95a5a6', fg='white', font=('Arial', 10),
+                 relief=tk.FLAT, padx=25, pady=8).pack(side=tk.LEFT, padx=8)
+        
     def _select_all(self):
         """Select all CP codes"""
         for data in self.cp_codes_data:
@@ -784,6 +949,7 @@ class ClientPositionPage:
         return {
             'client_position_path': self.client_position_path.get(),
             'output_path': self.output_path.get(),
+            'cash_collateral_path': self.cash_collateral_path.get(),
             'selected_cp_codes': [d['cp_code'] for d in selected],
             'cp_codes_config': {d['cp_code']: {
                 'password': d['password'],

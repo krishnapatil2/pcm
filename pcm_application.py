@@ -11,13 +11,14 @@ from tkinter import ttk, messagebox
 from db_manager import setup_database
 from ui_components import (
     HomePage, CompactHomePage, MinimalistHomePage, NavigationBar, MonthlyFloatReportPage, 
-    NMASSAllocationPage, ObligationSettlementPage, SegregationReportPage
+    NMASSAllocationPage, FileComparisonPage, ObligationSettlementPage, SegregationReportPage
 )
 from email_config_page import EmailConfigPage
 from client_position_page import ClientPositionPage
 from report_processors import (
     MonthlyFloatProcessor, NMASSAllocationProcessor, 
-    ObligationSettlementProcessor, SegregationReportProcessor, ClientPositionProcessor
+    ObligationSettlementProcessor, SegregationReportProcessor, ClientPositionProcessor,
+    FileComparisonProcessor
 )
 from utils import ErrorLogger, MessageHandler, WindowManager, Constants
 
@@ -68,7 +69,8 @@ class PCMApplication:
             'nmass_allocation': NMASSAllocationProcessor(self.db_path, self.error_logger.log_error),
             'obligation_settlement': ObligationSettlementProcessor(self.db_path, self.error_logger.log_error),
             'segregation_report': SegregationReportProcessor(self.db_path, self.error_logger.log_error),
-            'client_position': ClientPositionProcessor(self.db_path, self.error_logger.log_error)
+            'client_position': ClientPositionProcessor(self.db_path, self.error_logger.log_error),
+            'file_comparison': FileComparisonProcessor(self.db_path, self.error_logger.log_error)
         }
         
         # Pages dictionary
@@ -153,6 +155,7 @@ class PCMApplication:
         # Create individual pages
         self._create_monthly_float_page()
         self._create_nmass_allocation_page()
+        self._create_file_comparison_page()
         self._create_obligation_settlement_page()
         self._create_segregation_report_page()
         self._create_client_position_page()
@@ -182,6 +185,15 @@ class PCMApplication:
         )
         self.notebook.add(page.frame, text="NMASS Allocation Report")
         self.pages['nmass_allocation'] = page
+    
+    def _create_file_comparison_page(self):
+        """Create file comparison page"""
+        page = FileComparisonPage(
+            self.notebook,
+            on_compare_click=self._process_file_comparison
+        )
+        self.notebook.add(page.frame, text="File Comparison")
+        self.pages['file_comparison'] = page
     
     def _create_obligation_settlement_page(self):
         """Create obligation settlement page"""
@@ -237,7 +249,8 @@ class PCMApplication:
             "NMASS Allocation Report": "nmass_allocation", 
             "Obligation Settlement": "obligation_settlement",
             "Segregation Report": "segregation_report",
-            "Client Position Report": "client_position"
+            "Client Position Report": "client_position",
+            "File Comparison": "file_comparison"
         }
         
         if feature_name in tab_mapping:
@@ -362,6 +375,36 @@ class PCMApplication:
                 f"📊 Processing Results:\n{result}"
             )
         self._handle_process('nmass_allocation', 'nmass_allocation', "Generate NMASS Allocation Report", _msg)
+    
+    def _process_file_comparison(self):
+        """Process file comparison and reconciliation"""
+        def _msg(values, result):
+            attachment1_name = os.path.basename(values['attachment1_path']) if values.get('attachment1_path') else "Attachment 1"
+            attachment2_name = os.path.basename(values['attachment2_path']) if values.get('attachment2_path') else "Attachment 2"
+            
+            difference_lines = []
+            if values.get('compare_a_to_b'):
+                diff_count = result.get('only_in_attachment_1', 0)
+                difference_lines.append(f"• Attachment 1 → Attachment 2: {diff_count} unmatched record(s)")
+            if values.get('compare_b_to_a'):
+                diff_count = result.get('only_in_attachment_2', 0)
+                difference_lines.append(f"• Attachment 2 → Attachment 1: {diff_count} unmatched record(s)")
+            
+            if not difference_lines:
+                difference_lines.append("• No comparison direction selected.")
+            
+            differences_summary = "\n".join(difference_lines)
+            
+            return (
+                f"✅ File comparison completed successfully!\n\n"
+                f"📎 Attachment 1: {attachment1_name}\n"
+                f"📎 Attachment 2: {attachment2_name}\n"
+                f"📊 Common Columns Compared: {result.get('common_column_count', 0)}\n\n"
+                f"{differences_summary}\n\n"
+                f"📁 Output File: {result.get('output_file')}"
+            )
+        
+        self._handle_process('file_comparison', 'file_comparison', "File Comparison", _msg)
 
     def _process_obligation_settlement(self):
         """Process obligation settlement"""
@@ -398,10 +441,20 @@ class PCMApplication:
                 selected_cp_info = f"✓ Selected CP Codes ({cp_count}): {cp_list}\n"
             else:
                 selected_cp_info = "✓ Processed ALL CP codes from the file\n"
-            
+            collateral_info = ""
+            collateral_path = (values.get('cash_collateral_path') or '').strip()
+            if collateral_path:
+                collateral_info = f"📎 Cash Collateral File: {os.path.basename(collateral_path)}\n"
+
+            password_sync_info = ""
+            if isinstance(result, dict) and result.get('new_passwords'):
+                password_sync_info = f"🔐 New passwords added: {result['new_passwords']}\n"
+
             return (
                 f"✅ Client Position Report completed successfully!\n\n"
                 f"📄 Input File: {os.path.basename(values['client_position_path'])}\n"
+                f"{collateral_info}"
+                f"{password_sync_info}"
                 f"{selected_cp_info}"
                 f"📁 Output Folder: {values['output_path']}\n\n"
                 f"📊 Processing Results:\n{result}\n\n"
