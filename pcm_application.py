@@ -217,7 +217,8 @@ class PCMApplication:
         """Create client position page"""
         page = ClientPositionPage(
             self.notebook,
-            on_process_click=self._process_client_position
+            on_process_click=self._process_client_position,
+            on_collateral_sync=self._sync_cash_collateral
         )
         self.notebook.add(page.frame, text="Client Position Report")
         self.pages['client_position'] = page
@@ -461,6 +462,41 @@ class PCMApplication:
                 f"💡 Tip: Individual encrypted files created for each CP code (no totals by default)"
             )
         self._handle_process('client_position', 'client_position', "Process Client Position", _msg)
+
+    def _sync_cash_collateral(self, collateral_path):
+        """Handle on-demand cash collateral syncing from the UI."""
+        path = (collateral_path or "").strip()
+        if not path:
+            self.message_handler.show_warning("Cash Collateral Sync", "Please select a cash collateral file before syncing.")
+            return
+
+        if not os.path.exists(path):
+            self.message_handler.show_error("Cash Collateral Sync", f"Cash collateral file not found:\n{path}")
+            return
+
+        processor = self.processors.get('client_position')
+        if not processor:
+            self.message_handler.show_error("Cash Collateral Sync", "Client position processor is unavailable.")
+            return
+
+        try:
+            new_entries = processor.sync_collateral_passwords(path)
+        except Exception as exc:
+            self.message_handler.show_error("Cash Collateral Sync", f"Failed to sync passwords:\n{exc}")
+            return
+
+        client_page = self.pages.get('client_position')
+        if client_page and hasattr(client_page, 'load_cp_codes_from_json'):
+            try:
+                client_page.load_cp_codes_from_json()
+            except Exception as refresh_error:
+                # Refresh failure should not block success message; show warning
+                self.message_handler.show_warning("Cash Collateral Sync", f"Passwords updated, but failed to refresh CP table:\n{refresh_error}")
+        success_message = (
+            f"Cash collateral sync completed.\n"
+            f"New CP codes added: {new_entries}."
+        )
+        self.message_handler.show_success("Cash Collateral Sync", success_message)
 
 
 def main():

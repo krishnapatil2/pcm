@@ -120,11 +120,12 @@ class ClientPositionPage:
         {"cp_code": "DBSBK0000444", "password": "AALCD5956G", "mode": "7z", "add_total": False},
     ]
     
-    def __init__(self, parent, on_process_click, bg_color="#B5D1B1"):
+    def __init__(self, parent, on_process_click, on_collateral_sync=None, bg_color="#B5D1B1"):
         self.parent = parent
         self.bg_color = bg_color
         self.frame = tk.Frame(parent, bg=bg_color)
         self.on_process_click = on_process_click
+        self.on_collateral_sync = on_collateral_sync
         self.cp_codes_data = []  # Store CP codes with checkbox states and passwords
         self.master_json_path = "master_passwords.json"
         self.cash_collateral_path = tk.StringVar()
@@ -185,6 +186,9 @@ class ClientPositionPage:
                 font=('Arial', 9), width=25).pack(side=tk.LEFT, fill=tk.X, expand=True)
         tk.Button(file_frame3, text="📂", command=lambda: self._browse_file(self.cash_collateral_path),
                  bg='#3498db', fg='white', font=('Arial', 9, 'bold'),
+                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Button(file_frame3, text="⚡ Sync", command=self._trigger_collateral_sync,
+                 bg='#1abc9c', fg='white', font=('Arial', 9, 'bold'),
                  relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=(5, 0))
 
         # Output Folder (placed last)
@@ -248,6 +252,10 @@ class ClientPositionPage:
         
         tk.Button(crud_frame, text="🗑️ Delete", command=self.delete_cp_code,
                  bg='#e74c3c', fg='white', font=('Arial', 9, 'bold'), 
+                 relief=tk.FLAT, padx=12, pady=5).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(crud_frame, text="🧹 Delete All", command=self.delete_all_cp_codes,
+                 bg='#c0392b', fg='white', font=('Arial', 9, 'bold'),
                  relief=tk.FLAT, padx=12, pady=5).pack(side=tk.LEFT, padx=2)
         
         # Search and filter
@@ -346,7 +354,7 @@ class ClientPositionPage:
         from tkinter import filedialog
         filename = filedialog.askopenfilename(
             title="Select Client Position File",
-            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+            filetypes=[("All files", "*.*"), ("CSV files", "*.csv"), ("Excel files", "*.xlsx *.xls")]
         )
         if filename:
             var.set(filename)
@@ -357,6 +365,19 @@ class ClientPositionPage:
         foldername = filedialog.askdirectory(title="Select Output Folder")
         if foldername:
             var.set(foldername)
+
+    def _trigger_collateral_sync(self):
+        """Trigger standalone cash collateral sync via callback."""
+        if not self.on_collateral_sync:
+            messagebox.showwarning("Unavailable", "Collateral sync action is not configured.")
+            return
+
+        collateral_path = (self.cash_collateral_path.get() or "").strip()
+        if not collateral_path:
+            messagebox.showwarning("Missing File", "Please select a cash collateral file first.")
+            return
+
+        self.on_collateral_sync(collateral_path)
     
     def load_cp_codes_from_json(self):
         """Load CP codes from master_passwords.json - creates with defaults if not exists"""
@@ -713,6 +734,32 @@ class ClientPositionPage:
             
             messagebox.showinfo("✅ Success", 
                 f"Deleted CP Code: {cp_code}\n\nAutomatically saved to {self.master_json_path}")
+    
+    def delete_all_cp_codes(self):
+        """Delete every CP code after confirmation."""
+        if not self.cp_codes_data:
+            messagebox.showinfo("ℹ️ Nothing to Delete", "There are no CP codes to delete.")
+            return
+
+        confirm = messagebox.askyesno(
+            "🧹 Delete All CP Codes",
+            "This will permanently delete all CP codes from the table and JSON file.\n\n"
+            "Are you sure you want to continue?"
+        )
+        if not confirm:
+            return
+
+        self.cp_codes_data = []
+        self._refresh_tree()
+
+        try:
+            with open(self.master_json_path, 'w') as f:
+                json.dump([], f, indent=2)
+        except Exception as exc:
+            messagebox.showerror("❌ Error", f"Failed to clear CP codes:\n{exc}")
+            return
+
+        messagebox.showinfo("✅ Success", f"All CP codes deleted from {self.master_json_path}.")
     
     def _refresh_tree(self, filter_text=None):
         """Refresh the tree view with current data"""

@@ -1320,6 +1320,15 @@ class ClientPositionProcessor(BaseProcessor):
         
         # Allow processing without selecting specific CP codes since add_total is False by default
         # Users can process the entire file or select specific CP codes as needed
+
+    def sync_collateral_passwords(self, collateral_path):
+        """Standalone helper to sync CP passwords from a cash collateral file."""
+        collateral_path_clean = (collateral_path or "").strip()
+        if not collateral_path_clean:
+            raise ValueError("Please select a cash collateral file.")
+
+        new_entries = self._update_passwords_from_collateral(collateral_path_clean)
+        return new_entries
     
     def _read_file(self, file_path, **kwargs):
         """Read file with appropriate method based on extension"""
@@ -1670,7 +1679,7 @@ class ClientPositionProcessor(BaseProcessor):
             entry = {
                 'cp_code': cp_code,
                 'password': password,
-                'mode': '7z',
+                'mode': 'zip',
                 'add_total': False
             }
 
