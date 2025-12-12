@@ -17,7 +17,7 @@ import glob
 import cons_header
 from client_position_page import load_passwords
 from db_manager import insert_report
-from physical_settlement_files import build_dict, segregate_excel_by_column
+from physical_settlement_files import build_dict, segregate_excel_by_column, create_segregated_file_with_summary
 
 import json
 import os
@@ -29,6 +29,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from openpyxl import Workbook
 import pyzipper
 import py7zr
+
+from openpyxl.styles import PatternFill
 
 class BaseProcessor:
     """Base class for all processors"""
@@ -325,10 +327,10 @@ class NMASSAllocationProcessor(BaseProcessor):
             raise ValueError("Please select an output folder for the ledger.")
         
         if not os.path.exists(input1_path):
-            raise ValueError(f"Attachment 1 file not found:\n{input1_path}")
+            raise ValueError(f"System file not found:\n{input1_path}")
             
         if not os.path.exists(input2_path):
-            raise ValueError(f"Attachment 2 file not found:\n{input2_path}")
+            raise ValueError(f"Manual file not found:\n{input2_path}")
     
     def _read_file(self, file_path, selected_sheet=None, **kwargs):
         """Read file with appropriate method based on extension"""
@@ -391,12 +393,12 @@ class NMASSAllocationProcessor(BaseProcessor):
             df2[cons_header.CLIENT_CODE] = df2[cons_header.CLIENT_CODE].astype(str)
 
             data_dict = {
-                "file_1": dict(zip(df1[cons_header.TM_CP_CODE], df1[cons_header.CASH_COLLECTED])),
-                "file_2": dict(zip(df2[cons_header.CLIENT_CODE], df2[cons_header.FO_MARGIN]))
+                "system": dict(zip(df1[cons_header.TM_CP_CODE], df1[cons_header.CASH_COLLECTED])),
+                "manual": dict(zip(df2[cons_header.CLIENT_CODE], df2[cons_header.FO_MARGIN]))
             }
             
-            dict1 = data_dict["file_1"]
-            dict2 = data_dict["file_2"]
+            dict1 = data_dict["system"]
+            dict2 = data_dict["manual"]
 
             formatted_date = datetime.strptime(selected_date, "%d/%m/%Y").strftime("%d-%b-%Y").upper()
             dt = datetime.strptime(selected_date, "%d/%m/%Y").strftime("%d%m%Y")
@@ -500,7 +502,8 @@ class ObligationSettlementProcessor(BaseProcessor):
                     "Sell STT": "SellDelvryTtlTaxs"
                 },
                 filter_col="RptHdr",
-                filter_val=40
+                filter_val=40,
+                no_round_cols=["Buy STT", "Sell STT"]
             )
 
             stamp_duty_dict = build_dict(file_path=stamp_duty_path,
@@ -510,7 +513,8 @@ class ObligationSettlementProcessor(BaseProcessor):
                     "Buy Stamp Duty": "BuyDlvryStmpDty"
                 },
                 filter_col="RptHdr",
-                filter_val=40
+                filter_val=40,
+                no_round_cols=["Buy Stamp Duty", "Sell Stamp Duty"]
             )
             
             output_file = os.path.join(output_path, "Physical_Settlement_Report.xlsx")
@@ -519,6 +523,18 @@ class ObligationSettlementProcessor(BaseProcessor):
             segregate_excel_by_column(
                 excel_path=obligation_path,
                 output_path=output_file,
+                column_name="BrkrOrCtdnPtcptId",
+                custom_header=cons_header.OBLIGATION_HEADER,
+                update_dicts=[stt_dict, stamp_duty_dict]
+            )
+            
+            # Create segregated files with summary in ZIP
+            segregated_output_zip = os.path.join(output_path, "Physical_Settlement_Segregated_Report.zip")
+            create_segregated_file_with_summary(
+                obligation_path=obligation_path,
+                stt_path=stt_path,
+                stamp_duty_path=stamp_duty_path,
+                output_path=segregated_output_zip,
                 column_name="BrkrOrCtdnPtcptId",
                 custom_header=cons_header.OBLIGATION_HEADER,
                 update_dicts=[stt_dict, stamp_duty_dict]
@@ -1505,21 +1521,12 @@ class ClientPositionProcessor(BaseProcessor):
                 # Write rows with formula in existing Rmks column
                 row_num = 2  # Excel rows start from 1, header is 1, data starts from 2
                 for idx, row in group.iterrows():
-                    # Original row data - preserve ALL original columns
-                    row_data = []
-                    for col in group.columns:
-                        # If this is the Rmks column, put the formula instead of the value
-                        if add_total and col == 'Rmks' and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
-                            row_data.append(f"={prm_amt_col}{row_num}+{daly_mtm_col}{row_num}+{futrs_col}{row_num}+{exrc_col}{row_num}")
-                        else:
-                            val = row[col]
-                            # Handle NaN and None values
-                            if pd.isna(val):
-                                row_data.append("")
-                            else:
-                                row_data.append(val)
+                    # If this is the Rmks column, put the formula instead of the value
+                    if add_total and 'Rmks' in group.columns and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
+                        formula = f"={prm_amt_col}{row_num}+{daly_mtm_col}{row_num}+{futrs_col}{row_num}+{exrc_col}{row_num}"
+                        group.at[idx, 'Rmks'] = formula
                     
-                    ws.append(row_data)
+                    ws.append(list(row))
                     row_num += 1
 
                 # If totals required
@@ -1545,8 +1552,6 @@ class ClientPositionProcessor(BaseProcessor):
 
                 # Save Excel temp file
                 wb.save(excel_file)
-
-                # self.protect_existing_excel(excel_file, password)
 
                 # ZIP mode
                 if mode.lower() == "zip":
@@ -1861,10 +1866,15 @@ class ClientPositionProcessor(BaseProcessor):
 
 
 class FileComparisonProcessor(BaseProcessor):
-    """Processor for File Comparison & Reconciliation."""
+    """Processor for File Comparison & Reconciliation (replaced with test.py style comparison)."""
 
-    def process(self, attachment1_path, attachment2_path, output_path, compare_a_to_b, compare_b_to_a):
-        """Compare two attachments side-by-side with red highlighting for differences."""
+    CPCODE = "CP Code"
+    SEGMENT_INDICATOR = "Segment Indicator"
+    UCC_CODE = "UCC Code"
+    TRADING_MEMBER_PAN = "Trading member PAN"
+    ACCOUNT_TYPE = "Account Type"
+
+    def process(self, attachment1_path, attachment2_path, output_path, compare_a_to_b=None, compare_b_to_a=None):
         try:
             self.validate_inputs(
                 attachment1_path=attachment1_path,
@@ -1875,404 +1885,164 @@ class FileComparisonProcessor(BaseProcessor):
             )
             self.create_output_directory(output_path)
 
-            df1 = self._load_file(attachment1_path)
-            if isinstance(df1, str) and df1 == "PERMISSION_ERROR_HANDLED":
-                return df1
+            # Read CSVs without forcing dtype=str to preserve numeric types
+            df_system = pd.read_csv(attachment1_path).fillna("")
+            df_manual = pd.read_csv(attachment2_path).fillna("")
 
-            df2 = self._load_file(attachment2_path)
-            if isinstance(df2, str) and df2 == "PERMISSION_ERROR_HANDLED":
-                return df2
+            system_cols = df_system.columns.tolist()
+            manual_cols = df_manual.columns.tolist()
 
-            # Determine key columns with fallback logic
-            key_cols = self._determine_key_columns(df1, df2)
-            
-            # Get file types
-            file1_type = os.path.splitext(attachment1_path)[1].upper().replace('.', '')
-            file2_type = os.path.splitext(attachment2_path)[1].upper().replace('.', '')
-            
-            # Create output file
+            # Validate headers exactly match
+            if system_cols != manual_cols:
+                print("❌ Column headers do not match!")
+                print("System Columns:", system_cols)
+                print("Manual Columns:", manual_cols)
+                return
+
+            # Build keyed dicts (handles duplicate keys by suffixing #n)
+            system_dict = self._build_keyed_dict(df_system)
+            manual_dict = self._build_keyed_dict(df_manual)
+
+            # Ensure output is .xlsx
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_filename = f"file_comparison_{timestamp}.xlsx"
             output_file = os.path.join(output_path, output_filename)
+            if not output_file.lower().endswith(".xlsx"):
+                output_file = os.path.splitext(output_file)[0] + ".xlsx"
 
-            try:
-                # Create comparison with side-by-side view and red highlighting
-                self._create_comparison_excel(
-                    df1, df2, 
-                    attachment1_path, attachment2_path,
-                    file1_type, file2_type,
-                    key_cols, 
-                    output_file
-                )
-            except PermissionError:
-                handled = self.handle_file_permission_error(output_file, "write")
-                if handled == "PERMISSION_ERROR_HANDLED":
-                    return handled
-                raise
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Comparison"
+            red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+
+            # Create summary sheet for mismatch row numbers
+            ws_summary = wb.create_sheet("Summary")
+            ws_summary.append(["KEY", "System Row Number", "Manual Row Number", "Mismatched Columns"])
+
+            # Write a single header row (KEY, SOURCE, then original columns)
+            header = ["KEY", "SOURCE"] + system_cols
+            ws.append(header)
+
+            mismatches_found = False
+            all_keys = sorted(set(system_dict.keys()) | set(manual_dict.keys()))
+            summary_data = []
+
+            for key in all_keys:
+                row_sys = system_dict.get(key)
+                row_man = manual_dict.get(key)
+
+                # Build row value lists (preserve original columns order - manual approach)
+                vals_sys = []
+                vals_man = []
+                mismatched_cols = []
+                
+                for col in system_cols:
+                    # System file - get value as-is without strip()
+                    val_sys = row_sys.get(col, "") if row_sys else ""
+                    if pd.isna(val_sys):
+                        val_sys = ""
+                    else:
+                        val_sys = str(val_sys)  # Keep original spacing
+                    vals_sys.append(val_sys)
+                    
+                    # Manual file - get value as-is without strip()
+                    val_man = row_man.get(col, "") if row_man else ""
+                    if pd.isna(val_man):
+                        val_man = ""
+                    else:
+                        val_man = str(val_man)  # Keep original spacing
+                    vals_man.append(val_man)
+
+                # Append System row then Manual row (no repeated header)
+                file1_excel_row = ws.max_row + 1
+                file2_excel_row = file1_excel_row + 1
+                
+                ws.append([key, "System"] + vals_sys)
+                ws.append([key, "Manual"] + vals_man)
+
+                # Highlight differing cells for this key (skip both blank)
+                file1_row_idx = file1_excel_row
+                file2_row_idx = file2_excel_row
+                for i, col in enumerate(system_cols):
+                    v1 = vals_sys[i]
+                    v2 = vals_man[i]
+                    if v1 == "" and v2 == "":
+                        continue
+                    if v1 != v2:
+                        mismatches_found = True
+                        mismatched_cols.append(col)
+                        data_col_idx = 3 + i  # KEY=1, SOURCE=2, first data col=3
+                        ws.cell(row=file1_row_idx, column=data_col_idx).fill = red_fill
+                        ws.cell(row=file2_row_idx, column=data_col_idx).fill = red_fill
+
+                # Add to summary if there are mismatches
+                if mismatched_cols:
+                    summary_data.append([key, file1_excel_row, file2_excel_row, ", ".join(mismatched_cols)])
+
+                # optional spacer row between keys
+                ws.append([""] * (2 + len(system_cols)))
+
+            # Write summary data
+            for row_data in summary_data:
+                ws_summary.append(row_data)
+
+            wb.save(output_file)
+
+            if mismatches_found:
+                print(f"✔ Comparison report generated: {output_file}")
+                print(f"   - Summary sheet has quick reference to row numbers with mismatches")
+            else:
+                print("✔ No mismatches found. Files are identical.")
 
             return {
                 'output_file': output_file,
-                'key_columns_used': key_cols
+                'summary_count': len(summary_data)
             }
+
         except Exception as e:
             if output_path:
                 self.log_error(output_path, "File Comparison Processing", e)
-            raise e
+            raise
 
-    def _determine_key_columns(self, df1, df2):
-        """Determine key columns using fallback logic."""
-        # Try first option: CP Code - Segment Indicator
-        key_options = [
-            ["CP Code", "Segment Indicator"],
-            ["UCC Code", "Segment Indicator"],
-            ["Trading member PAN", "Account Type"]
-        ]
-        
-        for key_cols in key_options:
-            # Check if all key columns exist in both dataframes
-            missing_1 = [col for col in key_cols if col not in df1.columns]
-            missing_2 = [col for col in key_cols if col not in df2.columns]
-            
-            if not missing_1 and not missing_2:
-                return key_cols
-        
-        # If no key columns found, raise error
-        available_cols_1 = list(df1.columns)
-        available_cols_2 = list(df2.columns)
-        raise ValueError(
-            f"Could not find matching key columns in both files.\n"
-            f"Tried: {key_options}\n"
-            f"Available columns in Attachment 1: {available_cols_1}\n"
-            f"Available columns in Attachment 2: {available_cols_2}"
-        )
+    def _get_key(self, row):
+        # Primary key
+        if row[self.CPCODE] and row[self.SEGMENT_INDICATOR]:
+            key = f"{row[self.CPCODE]}_{row[self.SEGMENT_INDICATOR]}"
+            print(f"Key generated 1: {key}")
+            return key
 
-    def _values_equal(self, a, b, *, rel_tol=1e-9, abs_tol=1e-9):
-        """Compare two values safely, handling various types."""
-        # Both missing
-        if pd.isna(a) and pd.isna(b):
-            return True
-        # One missing, one not
-        if pd.isna(a) ^ pd.isna(b):
-            return False
-        # Try numeric comparison
-        try:
-            a_num = float(a)
-            b_num = float(b)
-            if math.isclose(a_num, b_num, rel_tol=rel_tol, abs_tol=abs_tol):
-                return True
-        except Exception:
-            pass
-        # String comparison (trim whitespace)
-        try:
-            a_str = str(a).strip()
-            b_str = str(b).strip()
-            if a_str == b_str:
-                return True
-        except Exception:
-            pass
-        # Fallback exact check
-        return a == b
+        # fallback 1
+        if row[self.UCC_CODE] and row[self.SEGMENT_INDICATOR]:
+            key = f"{row[self.UCC_CODE]}_{row[self.SEGMENT_INDICATOR]}"
+            print(f"Key generated 2: {key}")
+            return key
 
-    def _create_comparison_excel(self, df1, df2, file1_path, file2_path, file1_type, file2_type, key_cols, output_file):
-        """Create Excel file with side-by-side comparison and red highlighting for differences."""
-        import xlsxwriter
-        
-        workbook = xlsxwriter.Workbook(output_file)
-        worksheet = workbook.add_worksheet('Comparison')
-        
-        # Define formats
-        header_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#D3D3D3',
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
-        
-        file_type_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#E6E6FA',
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
-        
-        normal_format = workbook.add_format({
-            'border': 1,
-            'valign': 'vcenter'
-        })
-        
-        red_format = workbook.add_format({
-            'bg_color': '#FF0000',
-            'border': 1,
-            'valign': 'vcenter'
-        })
-        
-        # Get all unique columns preserving original order
-        # Start with df1 columns in their original order
-        all_columns = list(df1.columns)
-        # Add any columns from df2 that are not in df1, maintaining their relative order
-        for col in df2.columns:
-            if col not in all_columns:
-                all_columns.append(col)
-        
-        # Build lookup dictionaries for both dataframes using key columns
-        # For each key, store list of (index, row) tuples (handle duplicates)
-        df2_lookup = {}
-        df2_index_map = {}  # Map df2 index to key
-        df2_index_to_row_num = {}  # Map df2 index to row number in original file
-        for row_num, (idx, row) in enumerate(df2.iterrows(), start=1):
-            key = tuple(str(row[col]) if pd.notna(row[col]) else '' for col in key_cols)
-            if key not in df2_lookup:
-                df2_lookup[key] = []
-            df2_lookup[key].append((idx, row))
-            df2_index_map[idx] = key
-            df2_index_to_row_num[idx] = row_num + 1  # +1 for header row
-        
-        # Track which indices from df2 have been matched
-        df2_used_indices = set()
-        
-        # Track errors for summary sheet
-        error_summary = []
-        
-        # Write header row
-        row = 0
-        col = 0
-        
-        # First column: "File"
-        worksheet.write(row, col, "File", header_format)
-        col += 1
-        
-        # Write all column headers
-        for header in all_columns:
-            worksheet.write(row, col, header, header_format)
-            col += 1
-        
-        row += 1
-        
-        # Write alternating Attachment1 and Attachment2 rows
-        # Iterate through all rows in df1 (using enumerate to get sequential position)
-        for df1_row_num, (idx1, row1_data) in enumerate(df1.iterrows(), start=1):
-            # Get key for this row
-            key = tuple(str(row1_data[col]) if pd.notna(row1_data[col]) else '' for col in key_cols)
-            
-            # Find matching row in df2 (use first unmatched if multiple matches)
-            row2_data = None
-            matched_idx2 = None
-            if key in df2_lookup and df2_lookup[key]:
-                # Use first available match
-                for idx2, r2 in df2_lookup[key]:
-                    if idx2 not in df2_used_indices:
-                        row2_data = r2
-                        matched_idx2 = idx2
-                        df2_used_indices.add(idx2)
-                        break
-           
-            # Write Attachment1 row
-            col = 0
-            worksheet.write(row, col, "Attachment1", normal_format)
-            col += 1
-            
-            # Track if this row has any differences
-            has_differences = False
-            different_columns = []
-            
-            # Write all column values for Attachment1
-            for header in all_columns:
-                value1 = row1_data.get(header, '')
-                if pd.isna(value1):
-                    value1 = ''
-                
-                # Compare with df2 if match exists
-                if row2_data is not None:
-                    value2 = row2_data.get(header, '')
-                    if pd.isna(value2):
-                        value2 = ''
-                    
-                    # Check if values are different
-                    if not self._values_equal(value1, value2):
-                        # Different - highlight in red
-                        worksheet.write(row, col, value1, red_format)
-                        has_differences = True
-                        different_columns.append(header)
-                    else:
-                        # Same - normal format
-                        worksheet.write(row, col, value1, normal_format)
-                else:
-                    # No match in df2 - this is an extra record in Attachment1, highlight in red
-                    worksheet.write(row, col, value1, red_format)
-                    has_differences = True
-                    different_columns.append(header)
-                
-                col += 1
-            
-            # Record error if differences found
-            if has_differences:
-                error_type = "Value Mismatch" if row2_data is not None else "Extra Record in Attachment1"
-                # Calculate row number in original file (df1_row_num + 1 for header row)
-                attachment1_row = df1_row_num + 1
-                attachment2_row = df2_index_to_row_num.get(matched_idx2) if matched_idx2 is not None else None
-                
-                error_summary.append({
-                    'Attachment1_Row': attachment1_row,
-                    'Attachment2_Row': attachment2_row if attachment2_row is not None else "N/A",
-                    'Error_Type': error_type,
-                    'Different_Columns': ', '.join(different_columns) if different_columns else 'All columns'
-                })
-            
-            row += 1
-            
-            # Write Attachment2 row (matching or empty)
-            col = 0
-            worksheet.write(row, col, "Attachment2", normal_format)
-            col += 1
-            
-            # Write all column values for Attachment2
-            for header in all_columns:
-                if row2_data is not None:
-                    value2 = row2_data.get(header, '')
-                    if pd.isna(value2):
-                        value2 = ''
-                else:
-                    value2 = ''
-                
-                # Compare with df1 if match exists
-                if row2_data is not None:
-                    value1 = row1_data.get(header, '')
-                    if pd.isna(value1):
-                        value1 = ''
-                    
-                    # Check if values are different
-                    if not self._values_equal(value1, value2):
-                        # Different - highlight in red
-                        worksheet.write(row, col, value2, red_format)
-                    else:
-                        # Same - normal format
-                        worksheet.write(row, col, value2, normal_format)
-                else:
-                    # No match in df2 - missing value in Attachment2, highlight empty cell in red
-                    worksheet.write(row, col, value2, red_format)
-                
-                col += 1
-            
-            row += 1
-        
-        # Write remaining unmatched rows from df2
-        for idx2, row2_data in df2.iterrows():
-            # Check if this row was already used
-            if idx2 in df2_used_indices:
-                continue  # Already matched, skip
-            
-            # Write empty Attachment1 row (missing values - highlight in red)
-            col = 0
-            worksheet.write(row, col, "Attachment1", normal_format)
-            col += 1
-            for header in all_columns:
-                # Missing value in Attachment1 - highlight in red
-                worksheet.write(row, col, "", red_format)
-                col += 1
-            
-            row += 1
-            
-            # Write Attachment2 row (extra record - highlight in red)
-            col = 0
-            worksheet.write(row, col, "Attachment2", normal_format)
-            col += 1
-            
-            for header in all_columns:
-                value2 = row2_data.get(header, '')
-                if pd.isna(value2):
-                    value2 = ''
-                # Extra value in Attachment2 - highlight in red
-                worksheet.write(row, col, value2, red_format)
-                col += 1
-            
-            # Record error for extra record in Attachment2
-            attachment2_row = df2_index_to_row_num.get(idx2)
-            error_summary.append({
-                'Attachment1_Row': "N/A",
-                'Attachment2_Row': attachment2_row if attachment2_row is not None else "N/A",
-                'Error_Type': "Extra Record in Attachment2",
-                'Different_Columns': 'All columns'
-            })
-            
-            row += 1
-        
-        # Set column widths
-        worksheet.set_column(0, 0, 15)  # File column
-        for i, header in enumerate(all_columns, start=1):
-            worksheet.set_column(i, i, max(len(str(header)), 12))
-        
-        # Create Error Summary sheet
-        self._create_error_summary_sheet(workbook, error_summary, header_format, normal_format)
-        
-        workbook.close()
+        # fallback 2
+        if row[self.TRADING_MEMBER_PAN] and row[self.ACCOUNT_TYPE] and row[self.SEGMENT_INDICATOR]:
+            key = f"{row[self.TRADING_MEMBER_PAN]}_{row[self.ACCOUNT_TYPE]}_{row[self.SEGMENT_INDICATOR]}"
+            print(f"Key generated 3: {key}")
+            return key
 
-    def _create_error_summary_sheet(self, workbook, error_summary, header_format, normal_format):
-        """Create Error Summary sheet with row numbers where differences occurred."""
-        worksheet = workbook.add_worksheet('Error Summary')
-        
-        # Write header row
-        headers = ['Attachment1 Row', 'Attachment2 Row', 'Error Type', 'Different Columns']
-        row = 0
-        col = 0
-        
-        for header in headers:
-            worksheet.write(row, col, header, header_format)
-            col += 1
-        
-        row += 1
-        
-        # Write error data
-        for error in error_summary:
-            col = 0
-            worksheet.write(row, col, error['Attachment1_Row'], normal_format)
-            col += 1
-            worksheet.write(row, col, error['Attachment2_Row'], normal_format)
-            col += 1
-            worksheet.write(row, col, error['Error_Type'], normal_format)
-            col += 1
-            worksheet.write(row, col, error['Different_Columns'], normal_format)
-            row += 1
-        
-        # Set column widths
-        worksheet.set_column(0, 0, 20)  # Attachment1 Row
-        worksheet.set_column(1, 1, 20)  # Attachment2 Row
-        worksheet.set_column(2, 2, 30)  # Error Type
-        worksheet.set_column(3, 3, 50)  # Different Columns
+        return None
+
+    def _build_keyed_dict(self, df):
+        keyed = {}
+        counts = {}
+        for _, row in df.iterrows():
+            key = self._get_key(row)
+            if not key:
+                continue
+            # time.sleep(1)  # 1 second sleep
+            counts[key] = counts.get(key, 0) + 1
+            unique_key = f"{key}#{counts[key]}" if counts[key] > 1 else key
+            keyed[unique_key] = row.to_dict()
+        return keyed
 
     def validate_inputs(self, attachment1_path, attachment2_path, output_path, compare_a_to_b, compare_b_to_a):
         """Validate inputs for file comparison."""
-        if not attachment1_path.strip() or not attachment2_path.strip():
-            raise ValueError("Please select both attachment files before comparing.")
-
+        if not attachment1_path or not attachment2_path or not output_path:
+            raise ValueError("Please select both attachment files and an output folder before comparing.")
         if not os.path.exists(attachment1_path):
-            raise ValueError(f"Attachment 1 file not found:\n{attachment1_path}")
-
+            raise ValueError(f"System file not found:\n{attachment1_path}")
         if not os.path.exists(attachment2_path):
-            raise ValueError(f"Attachment 2 file not found:\n{attachment2_path}")
-
-        if not output_path.strip():
-            raise ValueError("Please select an output folder for the comparison workbook.")
-
-    def _load_file(self, file_path):
-        """Load CSV or Excel file safely."""
-        ext = os.path.splitext(file_path)[1].lower()
-
-        try:
-            if ext == ".csv":
-                df = pd.read_csv(file_path)
-            elif ext in [".xls", ".xlsx"]:
-                df = pd.read_excel(file_path)
-            else:
-                raise ValueError(f"Unsupported file type for comparison: {ext}")
-
-            df = df.dropna(how='all')
-            df.columns = df.columns.astype(str).str.strip()
-            return df
-        except PermissionError:
-            return self.handle_file_permission_error(file_path, "read")
-        except Exception as e:
-            if "Permission denied" in str(e) or "being used by another process" in str(e):
-                return self.handle_file_permission_error(file_path, "read")
-            raise e
+            raise ValueError(f"Manual file not found:\n{attachment2_path}")

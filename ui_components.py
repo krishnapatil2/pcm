@@ -763,8 +763,8 @@ class FileComparisonPage(BasePage):
         )
         subtitle_label.pack(pady=(0, 12))
         
-        FileInputWidget(container, "Attachment 1:", self.attachment1_var)
-        FileInputWidget(container, "Attachment 2:", self.attachment2_var)
+        FileInputWidget(container, "System:", self.attachment1_var)
+        FileInputWidget(container, "Manual:", self.attachment2_var)
         FileInputWidget(container, "Output Folder:", self.output_path_var, is_folder=True)
 
         mode_frame = tk.Frame(container, bg=self.bg_color)
@@ -781,7 +781,7 @@ class FileComparisonPage(BasePage):
         check_font = ('Arial', 10)
         tk.Checkbutton(
             mode_frame,
-            text="Downward (Attachment 1 → Attachment 2) – records only in Attachment 1",
+            text="Downward (System → Manual) – records only in System",
             variable=self.compare_a_to_b,
             onvalue=True,
             offvalue=False,
@@ -797,7 +797,7 @@ class FileComparisonPage(BasePage):
         
         tk.Checkbutton(
             mode_frame,
-            text="Upward (Attachment 2 → Attachment 1) – records only in Attachment 2",
+            text="Upward (Manual → System) – records only in Manual",
             variable=self.compare_b_to_a,
             onvalue=True,
             offvalue=False,

@@ -199,7 +199,7 @@ class MessageHandler:
                 "title": "File Comparison & Reconciliation:\n",
                 "description": [
                     "- Attach the two files that need to be reconciled.",
-                    "- Select whether to compare Attachment 1 against Attachment 2, Attachment 2 against Attachment 1, or both directions.",
+                    "- Select whether to compare System against Manual, Manual against System, or both directions.",
                     "- The comparison exports directional sheets with records that exist in one attachment but not the other.",
                     "- A summary tab highlights the number of unmatched records per direction for quick review.",
                     "- Use the output workbook as an audit trail before finalising downstream reports."

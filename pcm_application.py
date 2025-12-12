@@ -370,8 +370,8 @@ class PCMApplication:
                 f"✅ NMASS Allocation Report completed successfully!\n\n"
                 f"📅 Selected Date: {values['date']}\n"
                 f"📄 Selected Sheet: {values['sheet']}\n"
-                f"📎 Attachment 1: {os.path.basename(values['input1_path'])}\n"
-                f"📎 Attachment 2: {os.path.basename(values['input2_path'])}\n"
+                f"📎 System: {os.path.basename(values['input1_path'])}\n"
+                f"📎 Manual: {os.path.basename(values['input2_path'])}\n"
                 f"📁 Output Folder: {values['output_path']}\n\n"
                 f"📊 Processing Results:\n{result}"
             )
@@ -380,16 +380,16 @@ class PCMApplication:
     def _process_file_comparison(self):
         """Process file comparison and reconciliation"""
         def _msg(values, result):
-            attachment1_name = os.path.basename(values['attachment1_path']) if values.get('attachment1_path') else "Attachment 1"
-            attachment2_name = os.path.basename(values['attachment2_path']) if values.get('attachment2_path') else "Attachment 2"
+            attachment1_name = os.path.basename(values['attachment1_path']) if values.get('attachment1_path') else "System"
+            attachment2_name = os.path.basename(values['attachment2_path']) if values.get('attachment2_path') else "Manual"
             
             difference_lines = []
             if values.get('compare_a_to_b'):
                 diff_count = result.get('only_in_attachment_1', 0)
-                difference_lines.append(f"• Attachment 1 → Attachment 2: {diff_count} unmatched record(s)")
+                difference_lines.append(f"• System → Manual: {diff_count} unmatched record(s)")
             if values.get('compare_b_to_a'):
                 diff_count = result.get('only_in_attachment_2', 0)
-                difference_lines.append(f"• Attachment 2 → Attachment 1: {diff_count} unmatched record(s)")
+                difference_lines.append(f"• Manual → System: {diff_count} unmatched record(s)")
             
             if not difference_lines:
                 difference_lines.append("• No comparison direction selected.")
@@ -398,8 +398,8 @@ class PCMApplication:
             
             return (
                 f"✅ File comparison completed successfully!\n\n"
-                f"📎 Attachment 1: {attachment1_name}\n"
-                f"📎 Attachment 2: {attachment2_name}\n"
+                f"📎 System: {attachment1_name}\n"
+                f"📎 Manual: {attachment2_name}\n"
                 f"📊 Common Columns Compared: {result.get('common_column_count', 0)}\n\n"
                 f"{differences_summary}\n\n"
                 f"📁 Output File: {result.get('output_file')}"
