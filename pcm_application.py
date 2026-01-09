@@ -8,17 +8,19 @@ import sys
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox
+import pandas as pd
 from db_manager import setup_database
 from ui_components import (
     HomePage, CompactHomePage, MinimalistHomePage, NavigationBar, MonthlyFloatReportPage, 
-    NMASSAllocationPage, FileComparisonPage, ObligationSettlementPage, SegregationReportPage
+    NMASSAllocationPage, FileComparisonPage, ObligationSettlementPage, SegregationReportPage,
+    ExerciseAssignmentReportPage
 )
 from email_config_page import EmailConfigPage
 from client_position_page import ClientPositionPage
 from report_processors import (
     MonthlyFloatProcessor, NMASSAllocationProcessor, 
     ObligationSettlementProcessor, SegregationReportProcessor, ClientPositionProcessor,
-    FileComparisonProcessor
+    FileComparisonProcessor, ExerciseAssignmentProcessor
 )
 from utils import ErrorLogger, MessageHandler, WindowManager, Constants
 
@@ -70,7 +72,8 @@ class PCMApplication:
             'obligation_settlement': ObligationSettlementProcessor(self.db_path, self.error_logger.log_error),
             'segregation_report': SegregationReportProcessor(self.db_path, self.error_logger.log_error),
             'client_position': ClientPositionProcessor(self.db_path, self.error_logger.log_error),
-            'file_comparison': FileComparisonProcessor(self.db_path, self.error_logger.log_error)
+            'file_comparison': FileComparisonProcessor(self.db_path, self.error_logger.log_error),
+            'exercise_assignment': ExerciseAssignmentProcessor(self.db_path, self.error_logger.log_error)
         }
         
         # Pages dictionary
@@ -159,6 +162,7 @@ class PCMApplication:
         self._create_obligation_settlement_page()
         self._create_segregation_report_page()
         self._create_client_position_page()
+        self._create_exercise_assignment_page()
         
         self.pages['processing'] = processing_frame
     
@@ -223,6 +227,15 @@ class PCMApplication:
         self.notebook.add(page.frame, text="Client Position Report")
         self.pages['client_position'] = page
     
+    def _create_exercise_assignment_page(self):
+        """Create exercise assignment report page"""
+        page = ExerciseAssignmentReportPage(
+            self.notebook,
+            on_process_click=self._process_exercise_assignment
+        )
+        self.notebook.add(page.frame, text="Exercise Assignment Report")
+        self.pages['exercise_assignment'] = page
+    
     # Navigation handlers
     def _on_home_click(self):
         """Handle home button click"""
@@ -232,6 +245,27 @@ class PCMApplication:
         """Handle processing dropdown selection"""
         if selection == "Reports Dashboard":
             self.show_page('processing')
+        elif selection == "Monthly Float Report":
+            self.show_page('processing')
+            self.notebook.select(0)  # Monthly Float tab
+        elif selection == "NMASS Allocation Report":
+            self.show_page('processing')
+            self.notebook.select(1)  # NMASS Allocation tab
+        elif selection == "Physical Settlement":
+            self.show_page('processing')
+            self.notebook.select(3)  # Obligation Settlement tab
+        elif selection == "Segregation Report":
+            self.show_page('processing')
+            self.notebook.select(4)  # Segregation Report tab
+        elif selection == "Client Position Report":
+            self.show_page('processing')
+            self.notebook.select(5)  # Client Position tab
+        elif selection == "File Comparison":
+            self.show_page('processing')
+            self.notebook.select(2)  # File Comparison tab
+        elif selection == "Exercise Assignment Report":
+            self.show_page('processing')
+            self.notebook.select(6)  # Exercise Assignment Report tab
         self.nav_bar.fno_mcx_var.set("Processing")
     
     def _on_email_config_click(self):
@@ -251,7 +285,8 @@ class PCMApplication:
             "Obligation Settlement": "obligation_settlement",
             "Segregation Report": "segregation_report",
             "Client Position Report": "client_position",
-            "File Comparison": "file_comparison"
+            "File Comparison": "file_comparison",
+            "Exercise Assignment Report": "exercise_assignment"
         }
         
         if feature_name in tab_mapping:
@@ -498,12 +533,250 @@ class PCMApplication:
         )
         self.message_handler.show_success("Cash Collateral Sync", success_message)
 
+    def _process_exercise_assignment(self):
+        """Process exercise assignment report"""
+        # Clear any existing success message
+        exercise_page = self.pages.get('exercise_assignment')
+        if exercise_page and hasattr(exercise_page, 'hide_success_message'):
+            exercise_page.hide_success_message()
+        
+        # Validate output format selection
+        values = self.pages['exercise_assignment'].get_values()
+        output_format = values.get('output_format', [])
+        file_paths = values.get('file_paths', [])
+        
+        if not output_format:
+            messagebox.showwarning(
+                "Output Format Required",
+                "Please select at least one output format (CSV or XLSX)."
+            )
+            return
+        
+        if not file_paths or len(file_paths) == 0:
+            messagebox.showwarning(
+                "No Files Selected",
+                "Please select at least one file to process."
+            )
+            return
+        
+        # Handle multiple files
+        if len(file_paths) > 1:
+            def _msg_multiple(values, result):
+                successful = result.get('successful', 0)
+                failed = result.get('failed', 0)
+                total = result.get('total_files', 0)
+                zip_files = result.get('zip_files', [])
+                results_list = result.get('results', [])
+                
+                # Count info status (no records found)
+                info_count = len([r for r in results_list if r.get('status') == 'info'])
+                
+                message = (
+                    f"Exercise Assignment Report - Total Files Processed! "
+                    f"Total: {total}"
+                )
+                
+                
+                if info_count > 0:
+                    message += f", No Exercise and Assignment"
+                
+                if failed > 0:
+                    message += f", Failed: {failed}"
+                
+                message += f". Output: {values['output_path']}"
+                
+                if zip_files:
+                    message += f". Created {len(zip_files)} ZIP file(s)"
+                
+                return message
+            
+            # Process multiple files
+            loading_window = None
+            try:
+                loading_window = self.message_handler.show_loading(
+                    self.root, 
+                    "Processing", 
+                    f"Processing {len(file_paths)} file(s)..."
+                )
+                self.root.update()
+                
+                import threading
+                result_container = {'result': None, 'error': None}
+                
+                def process_in_thread():
+                    try:
+                        processor = self.processors['exercise_assignment']
+                        result_container['result'] = processor.process(
+                            file_paths=file_paths,
+                            output_path=values['output_path'],
+                            output_format=output_format
+                        )
+                    except Exception as e:
+                        result_container['error'] = str(e)
+                
+                process_thread = threading.Thread(target=process_in_thread, daemon=True)
+                process_thread.start()
+                
+                while process_thread.is_alive():
+                    self.root.update()
+                    import time
+                    time.sleep(0.01)
+                
+                if loading_window:
+                    self.message_handler.hide_loading(loading_window)
+                
+                if result_container['error']:
+                    self.message_handler.show_error("Error", f"❌ Failed: {result_container['error']}")
+                elif result_container['result']:
+                    msg = _msg_multiple(values, result_container['result'])
+                    
+                    # Show success message on frame
+                    exercise_page = self.pages.get('exercise_assignment')
+                    if exercise_page and hasattr(exercise_page, 'show_success_message'):
+                        exercise_page.show_success_message(msg)
+                    
+                    # Show email dialog if ZIP file was created
+                    zip_files = result_container['result'].get('zip_files', [])
+                    if zip_files and len(zip_files) > 0:
+                        zip_path = zip_files[0]
+                        file_list = result_container['result'].get('file_list', [])
+                        
+                        # Get file list from ZIP if not provided
+                        if not file_list:
+                            import zipfile
+                            try:
+                                with zipfile.ZipFile(zip_path, 'r') as zf:
+                                    file_list = zf.namelist()
+                            except:
+                                file_list = []
+                        
+                        if file_list:
+                            # Show email dialog with Exercise Assignment defaults
+                            try:
+                                from email_dialog import EmailDialog
+                                email_subject = "Exercise/Assignment Report"
+                                # email_body = "Dear Team,\nPlease find attached Exercise/Assignment Report."
+                                email_body = """
+                                                Dear Team,<br><br>
+                                                Please find attached Exercise/Assignment Report.
+                                            """
+                                email_dialog = EmailDialog(self.root, zip_path, file_list,
+                                                          default_subject=email_subject,
+                                                          default_body=email_body)
+                            except Exception as e:
+                                # If email dialog fails, just log and continue
+                                self.error_logger.log_error(values['output_path'], "Email Dialog Error", e)
+            except Exception as e:
+                if loading_window:
+                    self.message_handler.hide_loading(loading_window)
+                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
+        else:
+            # Handle single file (backward compatibility)
+            loading_window = None
+            try:
+                loading_window = self.message_handler.show_loading(
+                    self.root, 
+                    "Processing", 
+                    "Processing file..."
+                )
+                self.root.update()
+                
+                import threading
+                result_container = {'result': None, 'error': None}
+                
+                def process_in_thread():
+                    try:
+                        processor = self.processors['exercise_assignment']
+                        result_container['result'] = processor.process(
+                            zip_file_path=file_paths[0],
+                            output_path=values['output_path'],
+                            output_format=output_format
+                        )
+                    except Exception as e:
+                        result_container['error'] = str(e)
+                
+                process_thread = threading.Thread(target=process_in_thread, daemon=True)
+                process_thread.start()
+                
+                while process_thread.is_alive():
+                    self.root.update()
+                    import time
+                    time.sleep(0.01)
+                
+                if loading_window:
+                    self.message_handler.hide_loading(loading_window)
+                
+                if result_container['error']:
+                    self.message_handler.show_error("Error", f"❌ Failed: {result_container['error']}")
+                elif result_container['result'] is None:
+                    # No records found - info file was created
+                    friendly_msg = (
+                        f"ℹ️ No records found with ExrcAssgndVal != 0\n\n"
+                        f"This means there are no records in the file that meet the processing criteria.\n"
+                        f"Details have been saved to: exercise_assignment_info.txt\n\n"
+                        f"File: {os.path.basename(file_paths[0])}"
+                    )
+                    self.message_handler.show_info("Information", friendly_msg)
+                elif result_container['result']:
+                    filename = result_container['result'].get('filename', 'Unknown')
+                    extract_info = ""
+                    if result_container['result'].get('extract_dir'):
+                        extract_info = f"📂 Extracted to: {result_container['result']['extract_dir']}\n"
+                    zip_info = ""
+                    if result_container['result'].get('zip_file'):
+                        zip_info = f"📦 ZIP File: {os.path.basename(result_container['result']['zip_file'])}\n"
+                    dataframe = result_container['result'].get('dataframe', pd.DataFrame())
+                    row_count = len(dataframe) if dataframe is not None else 0
+                    msg = (
+                        f"Exercise Assignment Report - File Processed! "
+                        f"Input: {os.path.basename(file_paths[0])}, "
+                        f"File: {filename}, "
+                        f"Rows: {row_count}, "
+                        f"Output: {values['output_path']}"
+                    )
+
+                    # Show success message on frame
+                    exercise_page = self.pages.get('exercise_assignment')
+                    if exercise_page and hasattr(exercise_page, 'show_success_message'):
+                        exercise_page.show_success_message(msg)
+                    
+                    # Show email dialog if ZIP file was created
+                    zip_file = result_container['result'].get('zip_file') or result_container['result'].get('zip_path')
+                    if zip_file:
+                        file_list = result_container['result'].get('file_list', [])
+                        if not file_list:
+                            # Get file list from ZIP if not provided
+                            import zipfile
+                            try:
+                                with zipfile.ZipFile(zip_file, 'r') as zf:
+                                    file_list = zf.namelist()
+                            except:
+                                file_list = []
+                        
+                        if file_list:
+                            # Show email dialog
+                            # Show email dialog with Exercise Assignment defaults
+                            try:
+                                from email_dialog import EmailDialog
+                                email_subject = "Exercise/Assignment Report"
+                                email_body = "Dear Team,\nPlease find attached Exercise/Assignment Report."
+                                email_dialog = EmailDialog(self.root, zip_file, file_list,
+                                                          default_subject=email_subject,
+                                                          default_body=email_body)
+                            except Exception as e:
+                                # If email dialog fails, just log and continue
+                                self.error_logger.log_error(values['output_path'], "Email Dialog Error", e)
+            except Exception as e:
+                if loading_window:
+                    self.message_handler.hide_loading(loading_window)
+                self.message_handler.show_error("Error", f"❌ Failed: {str(e)}")
+
 
 def main():
     """Main entry point"""
     # Create splash screen FIRST - before any heavy operations
     splash = tk.Tk()
-    splash.title("PCM")
+    splash.title("PCM V8.0")
     splash.geometry("400x300")
     splash.resizable(False, False)
     
@@ -517,7 +790,7 @@ def main():
     splash.configure(bg='#2e7d32')
     
     # Logo/Title
-    title_label = tk.Label(splash, text="PCM", font=('Segoe UI', 32, 'bold'), 
+    title_label = tk.Label(splash, text="PCM V8.0", font=('Segoe UI', 32, 'bold'), 
                           bg='#2e7d32', fg='white')
     title_label.pack(pady=50)
     

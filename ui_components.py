@@ -3,6 +3,7 @@ UI Components for PCM Application
 Separated UI components for better maintainability
 """
 
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkcalendar import DateEntry
@@ -173,6 +174,7 @@ class HomePage(BasePage):
             ("📋", "Segregation Report", "Generate comprehensive segregation reports with all required data sources", "Segregation Report", "#66bb6a"),  # Lighter green
             ("📈", "Client Position Report", "Process client position files and generate detailed position reports", "Client Position Report", "#81c784"),  # Lightest green
             ("🧾", "File Comparison", "Reconcile two attachments with directional checks and detailed difference exports", "File Comparison", "#5fb87b"),
+            ("📦", "Exercise Assignment Report", "Extract and process CSV, XLS, XLSX files from zip archives", "Exercise Assignment Report", "#a5d6a7"),  # Very light green
         ]
 
         # Create modern feature cards in 3x2 grid
@@ -298,6 +300,7 @@ class CompactHomePage(BasePage):
             ("📋", "Segregation Report", "Comprehensive reports", "Segregation Report", "#66bb6a"),  # Lighter green
             ("📈", "Client Position Report", "Process client position files and generate detailed position reports", "Client Position Report", "#81c784"),  # Lightest green
             ("🧾", "File Comparison", "Reconcile two attachments with directional checks", "File Comparison", "#5fb87b"),
+            ("📦", "Exercise Assignment", "Extract and process files from zip", "Exercise Assignment Report", "#a5d6a7"),  # Very light green
         ]
 
         # Create modern horizontal cards
@@ -423,6 +426,7 @@ class MinimalistHomePage(BasePage):
             ("📋", "Segregation Report", "Segregation Report", "#66bb6a"),  # Lighter green
             ("📈", "Client Position Report", "Client Position Report", "#81c784"),  # Lightest green
             ("🧾", "File Comparison", "File Comparison", "#5fb87b"),
+            ("📦", "Exercise Assignment Report", "Exercise Assignment Report", "#a5d6a7"),  # Very light green
         ]
 
         # Create modern list layout
@@ -550,7 +554,8 @@ class NavigationBar:
         # Modern dropdown with green theme
         self.fno_mcx_var = tk.StringVar(value="Processing")
         fno_mcx_menu = tk.OptionMenu(nav_buttons_frame, self.fno_mcx_var,
-                                    "Reports Dashboard",
+                                    "Reports Dashboard","Monthly Float Report","NMASS Allocation Report","Physical Settlement","Segregation Report",
+                                    "Client Position Report","File Comparison","Exercise Assignment Report",
                                     command=self.on_processing_select)
         fno_mcx_menu.config(font=('Segoe UI', 11, 'bold'), bg="#4caf50", fg='white', 
                            relief=tk.FLAT, padx=18, pady=8, cursor='hand2')
@@ -1944,4 +1949,159 @@ class SegregationReportPage(BasePage):
             'santom_file': self.santom_file_var.get().strip(),
             'extra_records': self.extra_records_file.get().strip(),
             'output_path': self.segregation_output_var.get().strip()
+        }
+
+
+class ExerciseAssignmentReportPage(BasePage):
+    """Exercise Assignment Report page"""
+    def __init__(self, parent, on_process_click):
+        super().__init__(parent)
+        self.on_process_click = on_process_click
+        self.create_widgets()
+    
+    def create_widgets(self):
+        # Header
+        header_label = tk.Label(self.frame, text="Exercise Assignment Report", 
+                               font=('Arial', 16, 'bold'), bg=self.bg_color, fg='#2c3e50')
+        header_label.pack(pady=8)
+        
+        # File inputs
+        self.file_paths = []  # List to store multiple file paths
+        self.output_path = tk.StringVar()
+        
+        # File input (supports zip, gz, csv, xls, xlsx) - Multiple files
+        zip_frame = tk.Frame(self.frame, bg=self.bg_color)
+        zip_frame.pack(pady=8, padx=20, fill=tk.BOTH, expand=True)
+        
+        tk.Label(zip_frame, text="Input Files (ZIP/GZ/CSV/XLS/XLSX):", font=('Arial', 12, 'bold'),
+                bg=self.bg_color, fg='#2c3e50').pack(anchor=tk.W)
+        
+        # Frame for listbox and scrollbar
+        listbox_frame = tk.Frame(zip_frame, bg=self.bg_color)
+        listbox_frame.pack(pady=4, fill=tk.BOTH, expand=True)
+        
+        # Listbox to show selected files
+        scrollbar = tk.Scrollbar(listbox_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.file_listbox = tk.Listbox(listbox_frame, height=6, width=60,
+                                       font=('Arial', 10), yscrollcommand=scrollbar.set)
+        self.file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.file_listbox.yview)
+        
+        # Buttons frame
+        button_frame = tk.Frame(zip_frame, bg=self.bg_color)
+        button_frame.pack(pady=4, fill=tk.X)
+        
+        tk.Button(button_frame, text="Browse Files", command=self.select_files,
+                bg='#3498db', fg='white', font=('Arial', 10)).pack(side=tk.LEFT, padx=(0, 5))
+        
+        tk.Button(button_frame, text="Clear All", command=self.clear_files,
+                bg='#e74c3c', fg='white', font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
+        
+        # Output folder input
+        FileInputWidget(self.frame, "Output Folder:", self.output_path, is_folder=True)
+        
+        # Output format selection
+        format_frame = tk.Frame(self.frame, bg=self.bg_color)
+        format_frame.pack(pady=8, padx=20, fill=tk.X)
+        
+        tk.Label(format_frame, text="Output Format:", font=('Arial', 12, 'bold'),
+                bg=self.bg_color, fg='#2c3e50').pack(anchor=tk.W)
+        
+        checkbox_frame = tk.Frame(format_frame, bg=self.bg_color)
+        checkbox_frame.pack(pady=4, anchor=tk.W)
+        
+        self.output_format_csv = tk.BooleanVar(value=True)
+        self.output_format_xlsx = tk.BooleanVar(value=False)
+        
+        tk.Checkbutton(checkbox_frame, text="CSV", variable=self.output_format_csv,
+                      bg=self.bg_color, font=('Arial', 10)).pack(side=tk.LEFT, padx=(0, 20))
+        
+        tk.Checkbutton(checkbox_frame, text="XLSX", variable=self.output_format_xlsx,
+                      bg=self.bg_color, font=('Arial', 10)).pack(side=tk.LEFT)
+        
+        # Success message frame container (initially hidden) - will appear above process button
+        self.success_frame = None
+        
+        # Process button - store reference for positioning success message above it
+        self.process_btn = tk.Button(self.frame, text="🚀 Process Exercise Assignment", 
+                               command=self.on_process_click, bg='#27ae60', fg='white', 
+                               font=('Arial', 14, 'bold'), relief=tk.FLAT, padx=40, pady=8)
+        self.process_btn.pack(pady=28)
+    
+    def select_files(self):
+        """Select multiple files using file dialog (supports zip, gz, csv, xls, xlsx)"""
+        files = filedialog.askopenfilenames(
+            title="Select Files", 
+            filetypes=[
+                ("All Supported Files", "*.zip;*.gz;*.csv;*.xls;*.xlsx"),
+                ("ZIP Files", "*.zip"),
+                ("GZ Files", "*.gz"),
+                ("CSV Files", "*.csv"),
+                ("Excel Files", "*.xls;*.xlsx"),
+                ("All files", "*.*")
+            ]
+        )
+        if files:
+            for file in files:
+                if file not in self.file_paths:
+                    self.file_paths.append(file)
+                    self.file_listbox.insert(tk.END, os.path.basename(file))
+    
+    def clear_files(self):
+        """Clear all selected files"""
+        self.file_paths.clear()
+        self.file_listbox.delete(0, tk.END)
+    
+    def show_success_message(self, message):
+        """Show normal success message above process button - single line"""
+        # Remove existing success message if any
+        self.hide_success_message()
+        
+        # Replace any newlines with spaces to keep message on one line
+        single_line_message = str(message).replace('\n', ' ').replace('\r', ' ').strip()
+        
+        # Create normal-sized success message frame - pack above process button
+        self.success_frame = tk.Frame(self.frame, bg='#d4edda', relief=tk.FLAT, bd=0)
+        self.success_frame.pack(fill=tk.X, padx=20, pady=(5, 5), before=self.process_btn)
+        
+        # Success message content - single line, no wrapping
+        success_label = tk.Label(self.success_frame, text=f"✓ {single_line_message}", 
+                                font=('Arial', 9), bg='#d4edda', fg='#155724',
+                                anchor='w', justify=tk.LEFT)
+        success_label.pack(side=tk.LEFT, padx=6, pady=2)
+        
+        # Small close button
+        close_btn = tk.Button(self.success_frame, text="×", command=self.hide_success_message,
+                             bg='#d4edda', fg='#155724', font=('Arial', 10),
+                             relief=tk.FLAT, padx=2, pady=0, cursor='hand2', width=1)
+        close_btn.pack(side=tk.RIGHT, padx=(3, 3), pady=2)
+        
+        # Force update to ensure visibility
+        self.frame.update_idletasks()
+        self.frame.update()
+    
+    def hide_success_message(self):
+        """Hide success message from the frame"""
+        if self.success_frame:
+            try:
+                if self.success_frame.winfo_exists():
+                    self.success_frame.destroy()
+            except:
+                pass
+            self.success_frame = None
+    
+    def get_values(self):
+        # Determine output format
+        output_format = []
+        if self.output_format_csv.get():
+            output_format.append('csv')
+        if self.output_format_xlsx.get():
+            output_format.append('xlsx')
+        
+        return {
+            'file_paths': self.file_paths.copy(),  # Return list of file paths
+            'output_path': self.output_path.get().strip(),
+            'output_format': output_format
         }

@@ -296,7 +296,7 @@ class WindowManager:
     @staticmethod
     def setup_main_window(root, icon_path=None):
         """Setup main window properties"""
-        root.title("PCM - Professional Clearing Member")
+        root.title("PCM - Professional Clearing Member V8.0")
         
         # Get screen dimensions for responsive UI
         screen_width = root.winfo_screenwidth()

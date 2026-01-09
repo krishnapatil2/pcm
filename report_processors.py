@@ -11,6 +11,8 @@ import pandas as pd
 import zipfile
 import io
 import calendar
+import gzip
+import shutil
 from datetime import datetime, timedelta
 import traceback
 import glob
@@ -1518,6 +1520,10 @@ class ClientPositionProcessor(BaseProcessor):
                 exrc_col = col_to_excel(col_positions.get('ExrcAssgndVal', 0)) if 'ExrcAssgndVal' in col_positions else None
                 rmks_col = col_to_excel(col_positions.get('Rmks', 0)) if 'Rmks' in col_positions else None
 
+                # Convert Rmks column to object type if we need to add formulas to avoid dtype warnings
+                if add_total and 'Rmks' in group.columns and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
+                    group['Rmks'] = group['Rmks'].astype('object')
+
                 # Write rows with formula in existing Rmks column
                 row_num = 2  # Excel rows start from 1, header is 1, data starts from 2
                 for idx, row in group.iterrows():
@@ -1525,6 +1531,8 @@ class ClientPositionProcessor(BaseProcessor):
                     if add_total and 'Rmks' in group.columns and all([prm_amt_col, daly_mtm_col, futrs_col, exrc_col]):
                         formula = f"={prm_amt_col}{row_num}+{daly_mtm_col}{row_num}+{futrs_col}{row_num}+{exrc_col}{row_num}"
                         group.at[idx, 'Rmks'] = formula
+                        # IMPORTANT: iterrows() returns a copy; update `row` too so ws.append gets the formula
+                        row['Rmks'] = formula
                     
                     ws.append(list(row))
                     row_num += 1
@@ -1532,17 +1540,40 @@ class ClientPositionProcessor(BaseProcessor):
                 # If totals required
                 if add_total:
                     total_row = [""] * len(group.columns)
+                    total_end_row = row_num - 1  # Last data row
                     
-                    # Add TOTAL formula in Rmks column position
-                    if rmks_col:
-                        rmks_position = col_positions.get('Rmks', 0)
-                        total_end_row = row_num - 1  # Last data row
+                    # Build total formula by summing individual columns directly
+                    total_formula_parts = []
+                    if prm_amt_col:
+                        total_formula_parts.append(f"SUM({prm_amt_col}2:{prm_amt_col}{total_end_row})")
+                    if daly_mtm_col:
+                        total_formula_parts.append(f"SUM({daly_mtm_col}2:{daly_mtm_col}{total_end_row})")
+                    if futrs_col:
+                        total_formula_parts.append(f"SUM({futrs_col}2:{futrs_col}{total_end_row})")
+                    if exrc_col:
+                        total_formula_parts.append(f"SUM({exrc_col}2:{exrc_col}{total_end_row})")
+                    
+                    # Add TOTAL formula in Rmks column position if it exists, otherwise use ExrcAssgndVal column or last column
+                    if total_formula_parts:
+                        total_formula = "=" + "+".join(total_formula_parts)
                         
-                        # Add "TOTAL" text in the column just before Rmks
-                        if rmks_position > 0:
-                            total_row[rmks_position - 1] = "TOTAL"
-                        
-                        total_row[rmks_position] = f"=SUM({rmks_col}2:{rmks_col}{total_end_row})"
+                        # Determine where to place the total
+                        if rmks_col:
+                            rmks_position = col_positions.get('Rmks', 0)
+                            # Add "TOTAL" text in the column just before Rmks
+                            if rmks_position > 0:
+                                total_row[rmks_position - 1] = "TOTAL"
+                            total_row[rmks_position] = total_formula
+                        elif exrc_col:
+                            # If Rmks doesn't exist, use ExrcAssgndVal column
+                            exrc_position = col_positions.get('ExrcAssgndVal', 0)
+                            if exrc_position > 0:
+                                total_row[exrc_position - 1] = "TOTAL"
+                            total_row[exrc_position] = total_formula
+                        else:
+                            # Fallback: use last column
+                            total_row[-2] = "TOTAL"
+                            total_row[-1] = total_formula
                     
                     ws.append(total_row)
 
@@ -2046,3 +2077,655 @@ class FileComparisonProcessor(BaseProcessor):
             raise ValueError(f"System file not found:\n{attachment1_path}")
         if not os.path.exists(attachment2_path):
             raise ValueError(f"Manual file not found:\n{attachment2_path}")
+
+
+class ExerciseAssignmentProcessor(BaseProcessor):
+    """Processor for Exercise Assignment Report"""
+    
+    def process(self, zip_file_path=None, output_path=None, output_format=None, file_paths=None):
+        """Process zip/gz/csv/xls/xlsx file(s) for exercise assignment report
+        
+        Args:
+            zip_file_path: Single file path (for backward compatibility)
+            output_path: Output directory path
+            output_format: List of output formats ['csv', 'xlsx']
+            file_paths: List of file paths to process (for multiple files)
+        """
+        # Handle multiple files
+        if file_paths and len(file_paths) > 0:
+            return self._process_multiple_files(file_paths, output_path, output_format)
+        
+        # Handle single file (backward compatibility)
+        if not zip_file_path:
+            raise ValueError("Please provide either zip_file_path or file_paths")
+        
+        return self._process_single_file(zip_file_path, output_path, output_format)
+    
+    def _process_single_file(self, zip_file_path, output_path, output_format=None, skip_info_file=False):
+        """Process a single file"""
+        try:
+            self.validate_inputs(zip_file_path=zip_file_path, output_path=output_path)
+            self.create_output_directory(output_path)
+            
+            # Default to CSV if no format specified
+            if output_format is None:
+                output_format = ['csv']
+            elif not isinstance(output_format, list):
+                output_format = [output_format]
+            
+            file_lower = zip_file_path.lower()
+            data_file = None
+            extract_dir = None
+            
+            try:
+                # Handle direct CSV/XLS/XLSX files - no extraction needed
+                if file_lower.endswith(('.csv', '.xls', '.xlsx')):
+                    data_file = zip_file_path
+                    # No extraction needed for direct files
+                
+                # Handle .gz file - extract it first
+                elif file_lower.endswith('.gz'):
+                    # Create extraction directory for compressed files
+                    if extract_dir is None:
+                        extract_dir = os.path.join(output_path, "extracted_files")
+                        os.makedirs(extract_dir, exist_ok=True)
+                    # Extract .gz file
+                    extracted_file = self._extract_gz_file(zip_file_path, extract_dir)
+                    
+                    # Check if extracted file is CSV/XLS/XLSX or another archive
+                    extracted_lower = extracted_file.lower()
+                    if extracted_lower.endswith(('.csv', '.xls', '.xlsx')):
+                        data_file = extracted_file
+                    elif extracted_lower.endswith('.zip'):
+                        # If .gz contains a .zip, extract that too
+                        with zipfile.ZipFile(extracted_file, 'r') as zip_ref:
+                            zip_ref.extractall(extract_dir)
+                        # Find CSV/XLS/XLSX in the zip contents
+                        data_file = self._find_data_file(extract_dir)
+                    else:
+                        # Try to read the extracted file directly
+                        data_file = extracted_file
+                
+                # Handle .zip file - extract it
+                elif file_lower.endswith('.zip'):
+                    # Create extraction directory for compressed files
+                    if extract_dir is None:
+                        extract_dir = os.path.join(output_path, "extracted_files")
+                        os.makedirs(extract_dir, exist_ok=True)
+                    with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+                        zip_ref.extractall(extract_dir)
+                    
+                    # Find CSV, XLS, or XLSX file in extracted directory
+                    data_file = self._find_data_file(extract_dir)
+                
+                else:
+                    raise ValueError(f"Unsupported file format: {os.path.splitext(zip_file_path)[1]}")
+                
+            except zipfile.BadZipFile:
+                raise ValueError("Invalid zip file. Please ensure the file is a valid zip archive.")
+            except Exception as e:
+                # Clean up on error
+                try:
+                    if extract_dir and os.path.exists(extract_dir):
+                        shutil.rmtree(extract_dir)
+                except:
+                    pass
+                raise e
+
+            if not data_file or not os.path.exists(data_file):
+                if file_lower.endswith(('.csv', '.xls', '.xlsx')):
+                    raise ValueError(f"The file {os.path.basename(zip_file_path)} could not be read. Please ensure it is a valid data file.")
+                else:
+                    raise ValueError("No CSV, XLS, or XLSX file found after extraction. Please ensure the archive contains a valid data file.")
+            
+            # Read the file into dataframe
+            try:
+                df = self._read_file(data_file)
+                # print(f"DataFrame: {df}")
+                # print(f"DataFrame columns: {df.columns}")
+                # print(f"DataFrame index: {df.index}")
+                # print(f"DataFrame shape: {df.shape}")
+                if df is None or df.empty:
+                    raise ValueError(f"The file {os.path.basename(data_file)} is empty or could not be read.")
+            except Exception as e:
+                self.log_error(output_path, f"Error reading {os.path.basename(data_file)}", e)
+                raise e
+            
+            # Filter and segregate data
+            # Use original input file name for unique ZIP naming
+            original_input_name = os.path.splitext(os.path.basename(zip_file_path))[0]
+            result = self._filter_and_segregate(df, data_file, output_path, output_format, original_input_name, skip_info_file=skip_info_file)
+            
+            # If no records found, return info for consolidated info file
+            if result is None:
+                # Clean up extracted directory
+                if extract_dir:
+                    try:
+                        if os.path.exists(extract_dir):
+                            shutil.rmtree(extract_dir)
+                    except:
+                        pass
+                # Return info structure to indicate no records found (with dataframe for info file)
+                return {
+                    'file_path': data_file,
+                    'filename': os.path.basename(data_file),
+                    'dataframe': df,
+                    'extract_dir': extract_dir,
+                    'output_path': output_path,
+                    'zip_file': None,
+                    'no_records': True,
+                    'input_file_name': original_input_name
+                }
+            
+            # Always create info file for single file processing (if not skipped)
+            if not skip_info_file:
+                self._create_info_file(output_path, original_input_name, df, has_records=True)
+            
+            # Clean up extracted directory after successful processing (only if extraction was done)
+            if extract_dir:
+                try:
+                    if os.path.exists(extract_dir):
+                        shutil.rmtree(extract_dir)
+                except Exception as cleanup_error:
+                    # Log cleanup error but don't fail the process
+                    self.log_error(output_path, f"Error cleaning up extracted directory: {extract_dir}", cleanup_error)
+            
+            # Unpack result (zip_path, file_list)
+            if result is None:
+                zip_file_path = None
+                file_list = []
+            elif isinstance(result, tuple):
+                zip_file_path, file_list = result
+            else:
+                zip_file_path = result
+                file_list = []
+            
+            return {
+                'file_path': data_file,
+                'filename': os.path.basename(data_file),
+                'dataframe': df,
+                'extract_dir': extract_dir,
+                'output_path': output_path,
+                'zip_file': zip_file_path,
+                'zip_path': zip_file_path,  # Add zip_path for email dialog
+                'file_list': file_list  # Add file_list for email dialog
+            }
+                
+        except Exception as e:
+            # Clean up extracted directory on error
+            try:
+                if extract_dir and os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir)
+            except:
+                pass
+            self.log_error(output_path, "Exercise Assignment Processing", e)
+            raise e
+    
+    def _read_file_to_df(self, file_path, output_path):
+        """Helper to read a file and return dataframe"""
+        file_lower = file_path.lower()
+        data_file = None
+        extract_dir = None
+        
+        try:
+            if file_lower.endswith(('.csv', '.xls', '.xlsx')):
+                data_file = file_path
+            elif file_lower.endswith('.gz'):
+                extract_dir = os.path.join(output_path, "temp_extract")
+                os.makedirs(extract_dir, exist_ok=True)
+                extracted_file = self._extract_gz_file(file_path, extract_dir)
+                if extracted_file.lower().endswith(('.csv', '.xls', '.xlsx')):
+                    data_file = extracted_file
+                elif extracted_file.lower().endswith('.zip'):
+                    with zipfile.ZipFile(extracted_file, 'r') as zip_ref:
+                        zip_ref.extractall(extract_dir)
+                    data_file = self._find_data_file(extract_dir)
+            elif file_lower.endswith('.zip'):
+                extract_dir = os.path.join(output_path, "temp_extract")
+                os.makedirs(extract_dir, exist_ok=True)
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                data_file = self._find_data_file(extract_dir)
+            
+            if data_file and os.path.exists(data_file):
+                df = self._read_file(data_file)
+                return df
+        finally:
+            if extract_dir and os.path.exists(extract_dir):
+                try:
+                    shutil.rmtree(extract_dir)
+                except:
+                    pass
+        return None
+    
+    def _process_multiple_files(self, file_paths, output_path, output_format=None):
+        """Process multiple files: merge by BrkrOrCtdnPtcptId, Sgmt, Src and create files with date ranges"""
+        if not file_paths or len(file_paths) == 0:
+            raise ValueError("No files provided for processing")
+        
+        if not output_path:
+            raise ValueError("Please provide output folder before processing")
+        
+        self.create_output_directory(output_path)
+        
+        if output_format is None:
+            output_format = ['csv']
+        elif not isinstance(output_format, list):
+            output_format = [output_format]
+        
+        # Read all files and track which ones were read successfully
+        file_dataframes = []  # List of (file_name, dataframe) tuples
+        for file_path in file_paths:
+            df = self._read_file_to_df(file_path, output_path)
+            if df is not None and not df.empty:
+                file_name = os.path.splitext(os.path.basename(file_path))[0]
+                file_dataframes.append((file_name, df))
+        
+        if not file_dataframes:
+            raise ValueError("No valid data files could be read")
+        
+        # Combine all dataframes
+        all_dfs = [df for _, df in file_dataframes]
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+        
+        # Filter by ExrcAssgndVal != 0
+        combined_df['ExrcAssgndVal'] = pd.to_numeric(combined_df['ExrcAssgndVal'], errors='coerce')
+        filtered_df = combined_df[(combined_df['ExrcAssgndVal'] != 0) & (combined_df['ExrcAssgndVal'].notna())].copy()
+        
+        if filtered_df.empty:
+            # Create consolidated info file with all file dataframes (no records found)
+            self._create_consolidated_info_file(output_path, file_dataframes, has_records=False)
+            return {
+                'results': [{'file': os.path.basename(fp), 'status': 'info', 'message': 'No records found after merging'} for fp in file_paths],
+                'zip_files': [],
+                'total_files': len(file_paths),
+                'successful': 0,
+                'failed': 0
+            }
+        
+        # Update Rmks column
+        if 'Rmks' not in filtered_df.columns:
+            filtered_df['Rmks'] = ''
+        filtered_df['Rmks'] = filtered_df['Rmks'].fillna('').astype(str)
+        filtered_df.loc[filtered_df['ExrcAssgndVal'] < 0, 'Rmks'] = 'Assn'
+        filtered_df.loc[filtered_df['ExrcAssgndVal'] > 0, 'Rmks'] = 'Ex'
+        
+        # Remove specified columns
+        columns_to_remove = ['PrmAmt', 'DalyMrkToMktSettlmVal', 'FutrsFnlSttlmVal', 'Rsvd1', 'Rsvd2', 'Rsvd3', 'Rsvd4']
+        columns_to_drop = [col for col in columns_to_remove if col in filtered_df.columns]
+        if columns_to_drop:
+            filtered_df = filtered_df.drop(columns=columns_to_drop)
+        
+        # Normalize columns
+        filtered_df['BrkrOrCtdnPtcptId'] = filtered_df['BrkrOrCtdnPtcptId'].fillna("Blank").astype(str).str.strip()
+        if 'Sgmt' in filtered_df.columns:
+            filtered_df['Sgmt'] = filtered_df['Sgmt'].fillna("").astype(str).str.strip()
+        if 'Src' in filtered_df.columns:
+            filtered_df['Src'] = filtered_df['Src'].fillna("").astype(str).str.strip()
+        
+        # Group by BrkrOrCtdnPtcptId, Src, Sgmt
+        group_cols = ['BrkrOrCtdnPtcptId']
+        if 'Src' in filtered_df.columns:
+            group_cols.append('Src')
+        if 'Sgmt' in filtered_df.columns:
+            group_cols.append('Sgmt')
+        
+        temp_dir = os.path.join(output_path, "temp_segregated_files")
+        os.makedirs(temp_dir, exist_ok=True)
+        segregated_files = []
+        
+        try:
+            for group_key, group_df in filtered_df.groupby(group_cols):
+                # Get date range from RptgDt
+                from_date = to_date = ""
+                if 'RptgDt' in group_df.columns:
+                    dates = pd.to_datetime(group_df['RptgDt'], errors='coerce').dropna()
+                    if not dates.empty:
+                        from_date = dates.min().strftime('%Y%m%d')
+                        to_date = dates.max().strftime('%Y%m%d')
+                
+                # Build filename: BrkrOrCtdnPtcptId_Src_Sgmt_from_date_to_date
+                brkr_id = str(group_key[0])
+                src = str(group_key[1]) if len(group_key) > 1 and 'Src' in group_cols else ""
+                sgmt = str(group_key[2]) if len(group_key) > 2 and 'Sgmt' in group_cols else (str(group_key[1]) if len(group_key) > 1 and 'Sgmt' in group_cols else "")
+                
+                filename_parts = [brkr_id]
+                if src:
+                    filename_parts.append(src)
+                if sgmt:
+                    filename_parts.append(sgmt)
+                if from_date and to_date:
+                    filename_parts.extend([from_date, to_date])
+                
+                safe_filename = re.sub(r'[<>:"/\\|?*]', '_', '_'.join(filename_parts))
+                
+                # Create files in selected formats
+                for fmt in output_format:
+                    if fmt.lower() == 'csv':
+                        segregated_file = os.path.join(temp_dir, f"{safe_filename}.csv")
+                        group_df.to_csv(segregated_file, index=False)
+                        segregated_files.append(segregated_file)
+                    elif fmt.lower() == 'xlsx':
+                        segregated_file = os.path.join(temp_dir, f"{safe_filename}.xlsx")
+                        group_df.to_excel(segregated_file, index=False, engine='openpyxl')
+                        segregated_files.append(segregated_file)
+            
+            # Extract Sgmt value from the data for ZIP filename
+            sgmt_value = ""
+            if 'Sgmt' in filtered_df.columns:
+                # Get unique Sgmt values (non-empty)
+                unique_sgmts = filtered_df['Sgmt'].dropna().astype(str).str.strip()
+                unique_sgmts = unique_sgmts[unique_sgmts != ""].unique()
+                if len(unique_sgmts) > 0:
+                    # If all have same Sgmt, use it; otherwise use first one
+                    sgmt_value = str(unique_sgmts[0])
+                    # Clean up Sgmt value for filename (remove invalid characters)
+                    sgmt_value = re.sub(r'[<>:"/\\|?*]', '_', sgmt_value)
+            
+            # Create zip file with Sgmt in filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if sgmt_value:
+                zip_filename = f"ExerciseAssignment_{sgmt_value}_{timestamp}.zip"
+            else:
+                zip_filename = f"ExerciseAssignment_{timestamp}.zip"
+            zip_path = os.path.join(output_path, zip_filename)
+            
+            # Get list of file names that will be in the ZIP
+            file_list = []
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for segregated_file in segregated_files:
+                    filename = os.path.basename(segregated_file)
+                    zipf.write(segregated_file, filename)
+                    file_list.append(filename)
+            
+            # Create consolidated info file with all file dataframes (records found)
+            self._create_consolidated_info_file(output_path, file_dataframes, has_records=True)
+            
+            # Clean up
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            
+            return {
+                'results': [{'file': os.path.basename(fp), 'status': 'success'} for fp in file_paths],
+                'zip_files': [zip_path],
+                'zip_path': zip_path,  # Add zip_path for email dialog
+                'file_list': file_list,  # Add file_list for email dialog
+                'total_files': len(file_paths),
+                'successful': 1,
+                'failed': 0
+            }
+        except Exception as e:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
+    
+    def _extract_gz_file(self, gz_file_path, extract_dir):
+        """Extract .gz file and return path to extracted file"""
+        base_name = os.path.basename(gz_file_path)
+        # Remove .gz extension
+        extracted_name = base_name[:-3] if base_name.lower().endswith('.gz') else base_name
+        extracted_path = os.path.join(extract_dir, extracted_name)
+        
+        with gzip.open(gz_file_path, 'rb') as f_in:
+            with open(extracted_path, 'wb') as f_out:
+                f_out.write(f_in.read())
+        
+        return extracted_path
+    
+    def _find_data_file(self, search_dir):
+        """Find CSV, XLS, or XLSX file in directory"""
+        for root, dirs, files in os.walk(search_dir):
+            for file in files:
+                file_ext = os.path.splitext(file)[1].lower()
+                if file_ext in ['.csv', '.xls', '.xlsx']:
+                    return os.path.join(root, file)
+        return None
+    
+    def _filter_and_segregate(self, df, original_file_path, output_path, output_format=None, input_file_name=None, skip_info_file=False):
+        """Filter DataFrame by ExrcAssgndVal > 0, segregate by BrkrOrCtdnPtcptId, and save to zip
+        
+        Args:
+            df: DataFrame to process
+            original_file_path: Path to the original data file
+            output_path: Output directory path
+            output_format: List of output formats ['csv', 'xlsx']
+            input_file_name: Base name of the input file (for unique ZIP naming)
+            skip_info_file: If True, don't create info file (for multiple files processing)
+        """
+        # Default to CSV if no format specified
+        if output_format is None:
+            output_format = ['csv']
+        elif not isinstance(output_format, list):
+            output_format = [output_format]
+        # Validate required columns exist
+        required_columns = ['ExrcAssgndVal', 'BrkrOrCtdnPtcptId']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Required columns not found in DataFrame: {missing_columns}. Available columns: {df.columns.tolist()}")
+        
+        # Filter to exclude rows where ExrcAssgndVal = 0 (keep negative and positive values)
+        # Convert ExrcAssgndVal to numeric, handling any non-numeric values
+        # Work on a copy to avoid modifying original DataFrame
+        filtered_df = df.copy()
+        filtered_df['ExrcAssgndVal'] = pd.to_numeric(filtered_df['ExrcAssgndVal'], errors='coerce')
+        # Exclude rows where ExrcAssgndVal is 0 or NaN, but keep negative and positive values
+        filtered_df = filtered_df[(filtered_df['ExrcAssgndVal'] != 0) & (filtered_df['ExrcAssgndVal'].notna())].copy()
+        
+        if filtered_df.empty:
+            # Create info file only if not skipping (for single file processing)
+            if not skip_info_file:
+                info_file = self._create_info_file(output_path, input_file_name, df, has_records=False)
+            # Return None to indicate no processing needed
+            return None
+        
+        # Update Rmks column based on ExrcAssgndVal value
+        # If Rmks column doesn't exist, create it
+        if 'Rmks' not in filtered_df.columns:
+            filtered_df['Rmks'] = ''
+        
+        # Convert Rmks column to string type to avoid dtype warnings
+        # Replace NaN with empty string first, then convert to string
+        filtered_df['Rmks'] = filtered_df['Rmks'].fillna('').astype(str)
+        
+        # Update Rmks: "Assn" for negative values, "Ex" for positive values
+        filtered_df.loc[filtered_df['ExrcAssgndVal'] < 0, 'Rmks'] = 'Assn'
+        filtered_df.loc[filtered_df['ExrcAssgndVal'] > 0, 'Rmks'] = 'Ex'
+        
+        # Remove specified columns from output files
+        columns_to_remove = [
+            'PrmAmt',
+            'DalyMrkToMktSettlmVal',
+            'FutrsFnlSttlmVal',
+            'Rsvd1',
+            'Rsvd2',
+            'Rsvd3',
+            'Rsvd4'
+        ]
+        # Only drop columns that exist in the DataFrame
+        columns_to_drop = [col for col in columns_to_remove if col in filtered_df.columns]
+        if columns_to_drop:
+            filtered_df = filtered_df.drop(columns=columns_to_drop)
+        
+        # Create temporary directory for segregated files
+        temp_dir = os.path.join(output_path, "temp_segregated_files")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        segregated_files = []
+        
+        try:
+            # Segregate by BrkrOrCtdnPtcptId
+            # Handle NaN/blank values in BrkrOrCtdnPtcptId
+            filtered_df['BrkrOrCtdnPtcptId'] = filtered_df['BrkrOrCtdnPtcptId'].fillna("Blank").astype(str).str.strip()
+            filtered_df['BrkrOrCtdnPtcptId'] = filtered_df['BrkrOrCtdnPtcptId'].replace({"": "Blank"})
+            
+            # Group by BrkrOrCtdnPtcptId
+            for brkr_id, group_df in filtered_df.groupby('BrkrOrCtdnPtcptId'):
+                # Sanitize filename (remove invalid characters)
+                safe_filename = re.sub(r'[<>:"/\\|?*]', '_', str(brkr_id))
+                
+                # Create files in selected formats
+                for fmt in output_format:
+                    if fmt.lower() == 'csv':
+                        segregated_file = os.path.join(temp_dir, f"{safe_filename}.csv")
+                        group_df.to_csv(segregated_file, index=False)
+                        segregated_files.append(segregated_file)
+                    elif fmt.lower() == 'xlsx':
+                        segregated_file = os.path.join(temp_dir, f"{safe_filename}.xlsx")
+                        group_df.to_excel(segregated_file, index=False, engine='openpyxl')
+                        segregated_files.append(segregated_file)
+                    elif fmt.lower() == 'xls':
+                        segregated_file = os.path.join(temp_dir, f"{safe_filename}.xls")
+                        group_df.to_excel(segregated_file, index=False, engine='xlrd')
+                        segregated_files.append(segregated_file)
+            
+            # Extract Sgmt value from the data for ZIP filename
+            sgmt_value = ""
+            if 'Sgmt' in filtered_df.columns:
+                # Get unique Sgmt values (non-empty)
+                unique_sgmts = filtered_df['Sgmt'].dropna().astype(str).str.strip()
+                unique_sgmts = unique_sgmts[unique_sgmts != ""].unique()
+                if len(unique_sgmts) > 0:
+                    # If all have same Sgmt, use it; otherwise use first one
+                    sgmt_value = str(unique_sgmts[0])
+                    # Clean up Sgmt value for filename (remove invalid characters)
+                    sgmt_value = re.sub(r'[<>:"/\\|?*]', '_', sgmt_value)
+            
+            # Create zip file with Sgmt in filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if sgmt_value:
+                zip_filename = f"ExerciseAssignment_{sgmt_value}_{timestamp}.zip"
+            elif input_file_name:
+                # Sanitize input filename for use in ZIP name
+                safe_input_name = re.sub(r'[<>:"/\\|?*]', '_', input_file_name)
+                zip_filename = f"ExerciseAssignment_{safe_input_name}_{timestamp}.zip"
+            else:
+                zip_filename = f"ExerciseAssignment_{timestamp}.zip"
+            zip_path = os.path.join(output_path, zip_filename)
+            
+            # Get list of file names that will be in the ZIP
+            file_list = []
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for segregated_file in segregated_files:
+                    arcname = os.path.basename(segregated_file)
+                    zipf.write(segregated_file, arcname)
+                    file_list.append(arcname)
+            
+            # Clean up temporary directory
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            
+            return zip_path, file_list
+            
+        except Exception as e:
+            # Clean up on error
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+            raise e
+    
+    def _create_info_file(self, output_path, input_file_name, df, has_records=False):
+        """Create info file with file name and dates from RptgDt column"""
+        info_filename = "exercise_assignment_info.txt"
+        info_file_path = os.path.join(output_path, info_filename)
+        
+        with open(info_file_path, 'w', encoding='utf-8') as f:
+            if input_file_name:
+                f.write(f"Input File: {input_file_name}\n")
+            
+            if df is not None and not df.empty and 'RptgDt' in df.columns:
+                rptg_dt_values = df['RptgDt'].dropna()
+                if len(rptg_dt_values) > 0:
+                    unique_dates = sorted(rptg_dt_values.unique())
+                    if has_records:
+                        f.write(f"Processed dates: {', '.join(str(d) for d in unique_dates)}\n")
+                    else:
+                        for date_val in unique_dates:
+                            f.write(f"On date {date_val} no records found\n")
+                else:
+                    f.write("No records found\n" if not has_records else "Processed\n")
+            else:
+                f.write("No records found\n" if not has_records else "Processed\n")
+        
+        return info_file_path
+    
+    def _create_consolidated_info_file(self, output_path, file_dataframes, has_records=False):
+        """Create consolidated info file for multiple files"""
+        info_filename = "exercise_assignment_info.txt"
+        info_file_path = os.path.join(output_path, info_filename)
+        
+        with open(info_file_path, 'w', encoding='utf-8') as f:
+            for input_file_name, df in file_dataframes:
+                f.write(f"Input File: {input_file_name}\n")
+                
+                if df is not None and not df.empty and 'RptgDt' in df.columns:
+                    rptg_dt_values = df['RptgDt'].dropna()
+                    if len(rptg_dt_values) > 0:
+                        unique_dates = sorted(rptg_dt_values.unique())
+                        if has_records:
+                            f.write(f"Processed dates: {', '.join(str(d) for d in unique_dates)}\n")
+                        else:
+                            for date_val in unique_dates:
+                                f.write(f"On date {date_val} no records found\n")
+                    else:
+                        f.write("No records found\n" if not has_records else "Processed\n")
+                else:
+                    f.write("No records found\n" if not has_records else "Processed\n")
+                
+                # Add a blank line between files for readability
+                f.write("\n")
+        
+        return info_file_path
+    
+    def _read_file(self, file_path):
+        """Read file based on extension (CSV, XLS, XLSX, GZ)"""
+        file_lower = file_path.lower()
+        
+        try:
+            # Check for .gz files (gzipped files, typically CSV inside)
+            if file_lower.endswith('.gz'):
+                # Read gzipped file - assume CSV content inside
+                df = pd.read_csv(file_path, compression='gzip')
+            elif file_lower.endswith('.csv'):
+                df = pd.read_csv(file_path)
+            elif file_lower.endswith('.xlsx'):
+                df = pd.read_excel(file_path, engine='openpyxl')
+            elif file_lower.endswith('.xls'):
+                df = pd.read_excel(file_path, engine='xlrd')
+            else:
+                return None
+            
+            # Drop rows where all columns are NaN
+            df = df.dropna(how='all')
+            # Strip column names
+            df.columns = df.columns.str.strip()
+            
+            return df
+        except PermissionError:
+            self.handle_file_permission_error(file_path, "read")
+            return None
+        except Exception as e:
+            if "Permission denied" in str(e) or "being used by another process" in str(e):
+                self.handle_file_permission_error(file_path, "read")
+                return None
+            else:
+                raise e
+    
+    def validate_inputs(self, zip_file_path, output_path):
+        """Validate inputs for exercise assignment processing"""
+        if not zip_file_path or not output_path:
+            raise ValueError("Please select file and output folder before processing.")
+        if not os.path.exists(zip_file_path):
+            raise ValueError(f"File not found:\n{zip_file_path}")
+        file_lower = zip_file_path.lower()
+        if not (file_lower.endswith('.zip') or file_lower.endswith('.gz') or 
+                file_lower.endswith('.csv') or file_lower.endswith('.xls') or 
+                file_lower.endswith('.xlsx')):
+            raise ValueError("Selected file must be a .zip, .gz, .csv, .xls, or .xlsx file.")
+        
+        # Note: 
+        # - .zip files should contain CSV, XLS, or XLSX file inside
+        # - .gz files are single compressed files (typically CSV content)
+        # - .csv, .xls, .xlsx files are processed directly
+        # File content validation happens after extraction/processing in the process method
